@@ -8,6 +8,23 @@ REVENUE_TAGS = (
     "SalesRevenueNet",
 )
 NET_INCOME_TAGS = ("NetIncomeLoss",)
+OPERATING_INCOME_TAGS = ("OperatingIncomeLoss",)
+ASSETS_TAGS = ("Assets",)
+LIABILITIES_TAGS = ("Liabilities",)
+CASH_TAGS = (
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+)
+DEBT_TAGS = ("LongTermDebt",)
+DEBT_COMPONENT_TAGS = (
+    "LongTermDebtCurrent",
+    "LongTermDebtNoncurrent",
+)
+OPERATING_CASH_FLOW_TAGS = ("NetCashProvidedByUsedInOperatingActivities",)
+CAPITAL_EXPENDITURE_TAGS = (
+    "PaymentsToAcquirePropertyPlantAndEquipment",
+    "PaymentsToAcquireProductiveAssets",
+)
 
 
 def extract_financial_metrics(company_facts: dict[str, Any]) -> dict[str, Any]:
@@ -15,6 +32,22 @@ def extract_financial_metrics(company_facts: dict[str, Any]) -> dict[str, Any]:
 
     revenue_by_fy = _extract_metric_by_fiscal_year(company_facts, REVENUE_TAGS)
     net_income_by_fy = _extract_metric_by_fiscal_year(company_facts, NET_INCOME_TAGS)
+    operating_income_by_fy = _extract_metric_by_fiscal_year(
+        company_facts,
+        OPERATING_INCOME_TAGS,
+    )
+    assets_by_fy = _extract_metric_by_fiscal_year(company_facts, ASSETS_TAGS)
+    liabilities_by_fy = _extract_metric_by_fiscal_year(company_facts, LIABILITIES_TAGS)
+    cash_by_fy = _extract_metric_by_fiscal_year(company_facts, CASH_TAGS)
+    debt_by_fy = _extract_debt_by_fiscal_year(company_facts)
+    operating_cash_flow_by_fy = _extract_metric_by_fiscal_year(
+        company_facts,
+        OPERATING_CASH_FLOW_TAGS,
+    )
+    capital_expenditure_by_fy = _extract_metric_by_fiscal_year(
+        company_facts,
+        CAPITAL_EXPENDITURE_TAGS,
+    )
 
     if not revenue_by_fy:
         warnings.append("Revenue could not be extracted from SEC company facts.")
@@ -22,6 +55,10 @@ def extract_financial_metrics(company_facts: dict[str, Any]) -> dict[str, Any]:
 
     if not net_income_by_fy:
         warnings.append("Net income could not be extracted from SEC company facts.")
+    if not operating_income_by_fy:
+        warnings.append("Operating income could not be extracted from SEC company facts.")
+    if operating_cash_flow_by_fy and not capital_expenditure_by_fy:
+        warnings.append("Capital expenditure could not be extracted from SEC company facts.")
 
     periods: list[dict[str, Any]] = []
     previous_revenue: int | float | None = None
@@ -29,14 +66,38 @@ def extract_financial_metrics(company_facts: dict[str, Any]) -> dict[str, Any]:
         revenue = revenue_by_fy[fiscal_year]["val"]
         net_income_fact = net_income_by_fy.get(fiscal_year)
         net_income = net_income_fact["val"] if net_income_fact is not None else None
+        operating_income_fact = operating_income_by_fy.get(fiscal_year)
+        operating_income = (
+            operating_income_fact["val"] if operating_income_fact is not None else None
+        )
+        assets = _get_fact_value(assets_by_fy, fiscal_year)
+        liabilities = _get_fact_value(liabilities_by_fy, fiscal_year)
+        cash = _get_fact_value(cash_by_fy, fiscal_year)
+        debt = _get_fact_value(debt_by_fy, fiscal_year)
+        operating_cash_flow = _get_fact_value(operating_cash_flow_by_fy, fiscal_year)
+        capital_expenditure = _normalize_capex(
+            _get_fact_value(capital_expenditure_by_fy, fiscal_year)
+        )
 
         periods.append(
             {
                 "fy": fiscal_year,
                 "revenue": revenue,
                 "revenue_growth": _calculate_growth(revenue, previous_revenue),
+                "operating_income": operating_income,
+                "operating_margin": _calculate_margin(operating_income, revenue),
                 "net_income": net_income,
                 "net_margin": _calculate_margin(net_income, revenue),
+                "assets": assets,
+                "liabilities": liabilities,
+                "cash": cash,
+                "debt": debt,
+                "operating_cash_flow": operating_cash_flow,
+                "capital_expenditure": capital_expenditure,
+                "free_cash_flow": _calculate_free_cash_flow(
+                    operating_cash_flow,
+                    capital_expenditure,
+                ),
             }
         )
         previous_revenue = revenue
@@ -66,6 +127,30 @@ def _extract_metric_by_fiscal_year(
             return selected
 
     return {}
+
+
+def _extract_debt_by_fiscal_year(company_facts: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    debt_by_fy = _extract_metric_by_fiscal_year(company_facts, DEBT_TAGS)
+    if debt_by_fy:
+        return debt_by_fy
+
+    component_facts = [
+        _extract_metric_by_fiscal_year(company_facts, (tag,))
+        for tag in DEBT_COMPONENT_TAGS
+    ]
+    fiscal_years = set().union(*(facts.keys() for facts in component_facts))
+
+    combined: dict[int, dict[str, Any]] = {}
+    for fiscal_year in fiscal_years:
+        component_values = [
+            facts[fiscal_year]["val"]
+            for facts in component_facts
+            if fiscal_year in facts
+        ]
+        if component_values:
+            combined[fiscal_year] = {"val": sum(component_values)}
+
+    return combined
 
 
 def _select_annual_facts_by_fiscal_year(facts: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -120,3 +205,28 @@ def _calculate_margin(
     if numerator is None or denominator in (None, 0):
         return None
     return numerator / denominator
+
+
+def _calculate_free_cash_flow(
+    operating_cash_flow: int | float | None,
+    capital_expenditure: int | float | None,
+) -> int | float | None:
+    if operating_cash_flow is None or capital_expenditure is None:
+        return None
+    return operating_cash_flow - capital_expenditure
+
+
+def _normalize_capex(value: int | float | None) -> int | float | None:
+    if value is None:
+        return None
+    return abs(value)
+
+
+def _get_fact_value(
+    facts_by_fiscal_year: dict[int, dict[str, Any]],
+    fiscal_year: int,
+) -> int | float | None:
+    fact = facts_by_fiscal_year.get(fiscal_year)
+    if fact is None:
+        return None
+    return fact["val"]

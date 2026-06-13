@@ -1,0 +1,22 @@
+from typing import Any, TypedDict
+
+
+class FinSightState(TypedDict, total=False):
+    user_query: str
+
+    ticker: str | None
+    company_name: str | None
+    cik: str | None
+    resolution_status: str | None
+    resolution_confidence: float | None
+    candidate_matches: list[dict[str, Any]]
+
+    sec_submissions: dict[str, Any] | None
+    company_facts: dict[str, Any] | None
+    latest_10k: dict[str, Any] | None
+    latest_10q: dict[str, Any] | None
+    financial_metrics: dict[str, Any] | None
+
+    sources: list[dict[str, Any]]
+    warnings: list[dict[str, Any]]
+    errors: list[dict[str, Any]]
