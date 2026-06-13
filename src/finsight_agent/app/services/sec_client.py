@@ -9,6 +9,8 @@ class SECClientError(RuntimeError):
 
 class SECClient:
     COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+    SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik}.json"
+    COMPANY_FACTS_URL_TEMPLATE = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 
     def __init__(self, user_agent: str, timeout: float = 10.0) -> None:
         normalized_user_agent = user_agent.strip()
@@ -22,6 +24,18 @@ class SECClient:
     def fetch_company_tickers(self) -> dict[str, Any]:
         response = self._get(self.COMPANY_TICKERS_URL)
         return self._parse_json(response, source="company tickers")
+
+    def fetch_company_submissions(self, cik: str) -> dict[str, Any]:
+        normalized_cik = self._normalize_cik(cik)
+        url = self.SUBMISSIONS_URL_TEMPLATE.format(cik=normalized_cik)
+        response = self._get(url)
+        return self._parse_json(response, source="company submissions")
+
+    def fetch_company_facts(self, cik: str) -> dict[str, Any]:
+        normalized_cik = self._normalize_cik(cik)
+        url = self.COMPANY_FACTS_URL_TEMPLATE.format(cik=normalized_cik)
+        response = self._get(url)
+        return self._parse_json(response, source="company facts")
 
     def _get(self, url: str) -> httpx.Response:
         try:
@@ -59,3 +73,11 @@ class SECClient:
             "Accept": "application/json",
             "User-Agent": self._user_agent,
         }
+
+    @staticmethod
+    def _normalize_cik(cik: str) -> str:
+        digits = "".join(char for char in str(cik).strip() if char.isdigit())
+        if not digits:
+            msg = "CIK must contain at least one digit."
+            raise ValueError(msg)
+        return digits.zfill(10)
