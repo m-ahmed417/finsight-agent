@@ -1,0 +1,64 @@
+{
+  "cik": 320193,
+  "entityName": "Apple Inc.",
+  "facts": {
+    "us-gaap": {
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "units": {
+          "USD": [
+            {
+              "fy": 2023,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2023-11-03",
+              "val": 1000000000
+            },
+            {
+              "fy": 2024,
+              "fp": "FY",
+              "form": "10-Q",
+              "filed": "2024-08-02",
+              "val": 1100000000
+            },
+            {
+              "fy": 2024,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2024-11-01",
+              "val": 1250000000
+            }
+          ],
+          "EUR": [
+            {
+              "fy": 2024,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2024-11-01",
+              "val": 999000000
+            }
+          ]
+        }
+      },
+      "NetIncomeLoss": {
+        "units": {
+          "USD": [
+            {
+              "fy": 2023,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2023-11-03",
+              "val": 150000000
+            },
+            {
+              "fy": 2024,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2024-11-01",
+              "val": 250000000
+            }
+          ]
+        }
+      }
+    }
+  }
+}
