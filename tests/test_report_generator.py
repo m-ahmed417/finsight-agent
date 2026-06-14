@@ -217,3 +217,37 @@ def test_generate_research_report_includes_synthesized_research_sections() -> No
         "(Source: 10-K filed 2024-11-01, accession abc)"
     ) in report
     assert "- What changed in the latest annual filing compared with prior years?" in report
+
+
+def test_generate_research_report_prefers_llm_report_sections() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+        research_insights={
+            "executive_summary": ["Deterministic summary should be replaced."],
+            "bull_case": [{"title": "Deterministic point", "summary": "Replaced."}],
+            "bear_case": [],
+            "open_questions": [],
+        },
+        llm_report_sections={
+            "executive_summary": ["LLM-written summary."],
+            "financial_performance": "LLM-written financial performance.",
+            "risk_factors": ["LLM-written risk factor."],
+            "bull_case": ["LLM-written bull case."],
+            "bear_case": ["LLM-written bear case."],
+            "open_questions": ["LLM-written open question."],
+        },
+    )
+
+    assert "- LLM-written summary." in report
+    assert "LLM-written financial performance." in report
+    assert "- LLM-written risk factor." in report
+    assert "- LLM-written bull case." in report
+    assert "- LLM-written bear case." in report
+    assert "- LLM-written open question." in report
+    assert "Deterministic summary should be replaced." not in report

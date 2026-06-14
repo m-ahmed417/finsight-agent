@@ -19,35 +19,64 @@ def generate_research_report(
     risk_factors: list[dict[str, Any]] | None = None,
     risk_themes: list[dict[str, Any]] | None = None,
     research_insights: dict[str, Any] | None = None,
+    llm_report_sections: dict[str, Any] | None = None,
 ) -> str:
     metrics = financial_metrics or {"periods": []}
     extracted_risk_factors = risk_factors or []
     analyzed_risk_themes = risk_themes or []
     insights = research_insights or {}
+    drafted_sections = llm_report_sections or {}
     return "\n\n".join(
         [
             f"# FinSight Research Brief: {company_name} ({ticker})",
             f"## 1. Research-Only Notice\n\n{RESEARCH_ONLY_NOTICE}",
             "## 2. Executive Summary\n\n"
-            + _executive_summary_section(insights, company_name, ticker),
+            + _executive_summary_section(
+                insights,
+                company_name,
+                ticker,
+                drafted_sections,
+            ),
             "## 3. Company Overview\n\n"
             "A detailed business overview has not been generated yet. This section "
             "will later be grounded in filing text and company descriptions.",
-            "## 4. Financial Performance\n\n" + _financial_performance_summary(metrics),
+            "## 4. Financial Performance\n\n"
+            + _financial_performance_summary(metrics, drafted_sections),
             "## 5. Key Financial Metrics\n\n" + _metrics_table(metrics),
             "## 6. Risk Factors\n\n"
-            + _risk_factors_section(extracted_risk_factors, analyzed_risk_themes),
-            "## 7. Bull Case\n\n" + _research_points_section(insights.get("bull_case", [])),
-            "## 8. Bear Case\n\n" + _research_points_section(insights.get("bear_case", [])),
+            + _risk_factors_section(
+                extracted_risk_factors,
+                analyzed_risk_themes,
+                drafted_sections,
+            ),
+            "## 7. Bull Case\n\n"
+            + _research_points_section(
+                insights.get("bull_case", []),
+                drafted_sections.get("bull_case"),
+            ),
+            "## 8. Bear Case\n\n"
+            + _research_points_section(
+                insights.get("bear_case", []),
+                drafted_sections.get("bear_case"),
+            ),
             "## 9. Open Questions for Further Research\n\n"
-            + _open_questions_section(insights.get("open_questions", [])),
+            + _open_questions_section(
+                insights.get("open_questions", []),
+                drafted_sections,
+            ),
             "## 10. Sources Used\n\n" + _sources_section(latest_10k, latest_10q, sources),
             "## 11. Limitations\n\n" + _limitations_section(warnings),
         ]
     )
 
 
-def _financial_performance_summary(financial_metrics: dict[str, Any]) -> str:
+def _financial_performance_summary(
+    financial_metrics: dict[str, Any],
+    llm_report_sections: dict[str, Any],
+) -> str:
+    if llm_report_sections.get("financial_performance"):
+        return str(llm_report_sections["financial_performance"])
+
     periods = financial_metrics.get("periods", [])
     if not periods:
         return "Financial metrics were unavailable or could not be extracted."
@@ -120,7 +149,12 @@ def _executive_summary_section(
     research_insights: dict[str, Any],
     company_name: str,
     ticker: str,
+    llm_report_sections: dict[str, Any],
 ) -> str:
+    drafted_summary = llm_report_sections.get("executive_summary")
+    if drafted_summary:
+        return _plain_bullet_section(drafted_summary)
+
     summary_points = research_insights.get("executive_summary", [])
     if summary_points:
         return "\n".join(f"- {point}" for point in summary_points)
@@ -133,7 +167,13 @@ def _executive_summary_section(
     )
 
 
-def _research_points_section(points: list[dict[str, Any]]) -> str:
+def _research_points_section(
+    points: list[dict[str, Any]],
+    drafted_points: list[str] | None = None,
+) -> str:
+    if drafted_points:
+        return _plain_bullet_section(drafted_points)
+
     if not points:
         return (
             "This section is pending deterministic synthesis from grounded "
@@ -152,7 +192,14 @@ def _format_research_point(point: dict[str, Any]) -> str:
     return f"- **{title}**: {summary}"
 
 
-def _open_questions_section(questions: list[str]) -> str:
+def _open_questions_section(
+    questions: list[str],
+    llm_report_sections: dict[str, Any],
+) -> str:
+    drafted_questions = llm_report_sections.get("open_questions")
+    if drafted_questions:
+        return _plain_bullet_section(drafted_questions)
+
     if not questions:
         return (
             "- What changed in the latest annual filing compared with prior years?\n"
@@ -165,7 +212,12 @@ def _open_questions_section(questions: list[str]) -> str:
 def _risk_factors_section(
     risk_factors: list[dict[str, Any]],
     risk_themes: list[dict[str, Any]],
+    llm_report_sections: dict[str, Any],
 ) -> str:
+    drafted_risks = llm_report_sections.get("risk_factors")
+    if drafted_risks:
+        return _plain_bullet_section(drafted_risks)
+
     if risk_themes:
         return "\n".join(_format_risk_theme(theme) for theme in risk_themes)
 
@@ -222,3 +274,7 @@ def _format_source_line(source: dict[str, Any]) -> str:
     if url:
         return f"- {label}: {url}"
     return f"- {label}"
+
+
+def _plain_bullet_section(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items)

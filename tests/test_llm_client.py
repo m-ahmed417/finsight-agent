@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from finsight_agent.app.services.llm_client import (
     ChatModelLLMClient,
     LLMClientError,
+    MAX_RISK_FACTOR_TEXT_CHARS,
     MockLLMClient,
     get_llm_client,
 )
@@ -37,6 +39,58 @@ def test_mock_llm_client_returns_deterministic_structured_risk_themes() -> None:
     ]
     assert result["themes"][0]["source_form"] == "10-K"
     assert result["themes"][0]["accession_number"] == "0000320193-24-000123"
+
+
+def sample_report_evidence() -> dict:
+    return {
+        "company_name": "Apple Inc.",
+        "ticker": "AAPL",
+        "financial_metrics": {
+            "periods": [
+                {
+                    "fy": 2024,
+                    "revenue": 1250000000,
+                    "revenue_growth": 0.25,
+                    "free_cash_flow": 280000000,
+                }
+            ]
+        },
+        "risk_themes": [
+            {
+                "title": "Competitive pressure",
+                "summary": "Competition could pressure operating performance.",
+            }
+        ],
+        "research_insights": {
+            "executive_summary": [
+                "Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
+            ],
+            "bull_case": [{"title": "Revenue growth", "summary": "Revenue increased."}],
+            "bear_case": [
+                {"title": "Competitive pressure", "summary": "Competition is a risk."}
+            ],
+            "open_questions": ["Are revenue growth and cash flow durable?"],
+        },
+        "sources": [{"label": "SEC company facts", "url": "https://example.com"}],
+        "warnings": [],
+    }
+
+
+def test_mock_llm_client_returns_deterministic_report_sections() -> None:
+    client = MockLLMClient()
+
+    result = client.draft_report(sample_report_evidence())
+
+    assert result["warnings"] == []
+    assert result["sections"]["executive_summary"] == [
+        "Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
+    ]
+    assert result["sections"]["financial_performance"] == (
+        "For fiscal 2024, extracted revenue was 1250000000 and free cash flow was 280000000."
+    )
+    assert result["sections"]["risk_factors"] == [
+        "Competitive pressure: Competition could pressure operating performance."
+    ]
 
 
 def test_get_llm_client_returns_mock_provider_by_default() -> None:
@@ -95,6 +149,47 @@ def test_chat_model_llm_client_parses_structured_risk_themes() -> None:
     assert "neutral equity research" in chat_model.messages[0]["content"]
 
 
+def test_chat_model_llm_client_truncates_large_risk_factor_text() -> None:
+    long_text = "A" * (MAX_RISK_FACTOR_TEXT_CHARS + 25)
+    risk_factors = [
+        {
+            "form": "10-K",
+            "filing_date": "2024-11-01",
+            "accession_number": "0000320193-24-000123",
+            "source_url": "https://www.sec.gov/filing.htm",
+            "text": long_text,
+        }
+    ]
+    chat_model = FakeChatModel(
+        """
+        {
+          "themes": [
+            {
+              "title": "Large risk section",
+              "summary": "The risk section was summarized from truncated input."
+            }
+          ]
+        }
+        """
+    )
+    client = ChatModelLLMClient(chat_model=chat_model, model_name="fake-model")
+
+    result = client.summarize_risks(risk_factors)
+    user_payload = json.loads(chat_model.messages[1]["content"])
+
+    assert len(user_payload["risk_factors"][0]["text"]) == MAX_RISK_FACTOR_TEXT_CHARS
+    assert result["warnings"] == [
+        {
+            "code": "llm_input_truncated",
+            "message": (
+                "Risk-factor text was truncated to "
+                f"{MAX_RISK_FACTOR_TEXT_CHARS} characters before LLM analysis."
+            ),
+            "severity": "warning",
+        }
+    ]
+
+
 def test_chat_model_llm_client_rejects_invalid_json() -> None:
     client = ChatModelLLMClient(
         chat_model=FakeChatModel("not-json"),
@@ -103,6 +198,68 @@ def test_chat_model_llm_client_rejects_invalid_json() -> None:
 
     with pytest.raises(LLMClientError, match="valid JSON"):
         client.summarize_risks(sample_risk_factors())
+
+
+def test_chat_model_llm_client_rejects_empty_themes() -> None:
+    client = ChatModelLLMClient(
+        chat_model=FakeChatModel('{"themes": []}'),
+        model_name="fake-model",
+    )
+
+    with pytest.raises(LLMClientError, match="at least one theme"):
+        client.summarize_risks(sample_risk_factors())
+
+
+def test_chat_model_llm_client_rejects_blank_theme_fields() -> None:
+    client = ChatModelLLMClient(
+        chat_model=FakeChatModel('{"themes": [{"title": " ", "summary": ""}]}'),
+        model_name="fake-model",
+    )
+
+    with pytest.raises(LLMClientError, match="valid risk themes"):
+        client.summarize_risks(sample_risk_factors())
+
+
+def test_chat_model_llm_client_parses_structured_report_sections() -> None:
+    chat_model = FakeChatModel(
+        """
+        {
+          "executive_summary": ["LLM-written summary."],
+          "financial_performance": "LLM-written financial performance.",
+          "risk_factors": ["LLM-written risk factor."],
+          "bull_case": ["LLM-written bull case."],
+          "bear_case": ["LLM-written bear case."],
+          "open_questions": ["LLM-written open question."]
+        }
+        """
+    )
+    client = ChatModelLLMClient(chat_model=chat_model, model_name="fake-model")
+
+    result = client.draft_report(sample_report_evidence())
+
+    assert result == {
+        "sections": {
+            "executive_summary": ["LLM-written summary."],
+            "financial_performance": "LLM-written financial performance.",
+            "risk_factors": ["LLM-written risk factor."],
+            "bull_case": ["LLM-written bull case."],
+            "bear_case": ["LLM-written bear case."],
+            "open_questions": ["LLM-written open question."],
+        },
+        "warnings": [],
+    }
+    assert chat_model.messages[0]["role"] == "system"
+    assert "source-grounded research brief sections" in chat_model.messages[0]["content"]
+
+
+def test_chat_model_llm_client_rejects_invalid_report_sections() -> None:
+    client = ChatModelLLMClient(
+        chat_model=FakeChatModel('{"executive_summary": []}'),
+        model_name="fake-model",
+    )
+
+    with pytest.raises(LLMClientError, match="valid report sections"):
+        client.draft_report(sample_report_evidence())
 
 
 def test_get_llm_client_builds_openai_provider(monkeypatch) -> None:

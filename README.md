@@ -44,6 +44,13 @@ with a matching `LLM_MODEL` and provider API credentials in the environment.
 Use `OPENAI_API_KEY` for `LLM_PROVIDER=openai` and `DEEPSEEK_API_KEY` for
 `LLM_PROVIDER=deepseek`.
 
+Run an opt-in live LLM smoke test:
+
+```powershell
+$env:RUN_LIVE_LLM_TESTS="1"
+uv run pytest tests/test_live_llm.py
+```
+
 ## Database Migrations
 
 FinSight uses Alembic for database schema migrations.

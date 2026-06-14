@@ -32,6 +32,7 @@ def build_research_graph(
     graph.add_node("analyze_risks", _make_analyze_risks_node(llm_client))
     graph.add_node("extract_metrics", _extract_metrics)
     graph.add_node("synthesize_research", _synthesize_research)
+    graph.add_node("draft_report", _make_draft_report_node(llm_client))
     graph.add_node("generate_report", _generate_report)
     graph.add_node("compliance_check", _compliance_check)
 
@@ -57,7 +58,8 @@ def build_research_graph(
     graph.add_edge("fetch_filing_text", "analyze_risks")
     graph.add_edge("analyze_risks", "extract_metrics")
     graph.add_edge("extract_metrics", "synthesize_research")
-    graph.add_edge("synthesize_research", "generate_report")
+    graph.add_edge("synthesize_research", "draft_report")
+    graph.add_edge("draft_report", "generate_report")
     graph.add_edge("generate_report", "compliance_check")
     graph.add_edge("compliance_check", END)
 
@@ -81,6 +83,7 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "risk_themes": state.get("risk_themes", []),
         "financial_metrics": state.get("financial_metrics"),
         "research_insights": state.get("research_insights"),
+        "llm_report_sections": state.get("llm_report_sections"),
         "report_draft": state.get("report_draft"),
         "final_report": state.get("final_report"),
         "compliance_status": state.get("compliance_status"),
@@ -425,6 +428,59 @@ def _synthesize_research(state: FinSightState) -> FinSightState:
     }
 
 
+def _make_draft_report_node(llm_client: Any | None):
+    def draft_report(state: FinSightState) -> FinSightState:
+        if llm_client is None or not hasattr(llm_client, "draft_report"):
+            return {
+                "llm_report_sections": None,
+                "agent_steps": _append_step(
+                    state,
+                    "draft_report",
+                    "completed",
+                    "Using deterministic report generator.",
+                ),
+            }
+
+        try:
+            draft = _validate_report_draft(
+                llm_client.draft_report(_report_evidence(state))
+            )
+        except Exception as exc:
+            return {
+                "llm_report_sections": None,
+                "warnings": [
+                    *state.get("warnings", []),
+                    {
+                        "code": "llm_report_drafting_unavailable",
+                        "message": str(exc),
+                        "severity": "warning",
+                    },
+                ],
+                "agent_steps": _append_step(
+                    state,
+                    "draft_report",
+                    "completed",
+                    "Using deterministic report generator after LLM report drafting failed.",
+                ),
+            }
+
+        return {
+            "llm_report_sections": draft["sections"],
+            "warnings": [
+                *state.get("warnings", []),
+                *draft.get("warnings", []),
+            ],
+            "agent_steps": _append_step(
+                state,
+                "draft_report",
+                "completed",
+                "Generated LLM-assisted report sections from structured evidence.",
+            ),
+        }
+
+    return draft_report
+
+
 def _generate_report(state: FinSightState) -> FinSightState:
     report_draft = generate_research_report(
         company_name=state.get("company_name") or "Unknown Company",
@@ -437,6 +493,7 @@ def _generate_report(state: FinSightState) -> FinSightState:
         risk_factors=state.get("risk_factors", []),
         risk_themes=state.get("risk_themes", []),
         research_insights=state.get("research_insights"),
+        llm_report_sections=state.get("llm_report_sections"),
     )
     return {
         "report_draft": report_draft,
@@ -539,11 +596,65 @@ def _validate_risk_analysis(analysis: Any) -> dict[str, Any]:
     if not isinstance(themes, list):
         msg = "LLM risk analysis must include a themes list."
         raise ValueError(msg)
+    if not themes:
+        msg = "LLM risk analysis must include at least one theme."
+        raise ValueError(msg)
     if not isinstance(warnings, list):
         msg = "LLM risk analysis warnings must be a list."
         raise ValueError(msg)
 
     return {"themes": themes, "warnings": warnings}
+
+
+def _validate_report_draft(draft: Any) -> dict[str, Any]:
+    if not isinstance(draft, dict):
+        msg = "LLM report draft must return a dictionary."
+        raise ValueError(msg)
+
+    sections = draft.get("sections")
+    warnings = draft.get("warnings", [])
+    if not isinstance(sections, dict):
+        msg = "LLM report draft must include sections."
+        raise ValueError(msg)
+    required_string_fields = ("financial_performance",)
+    required_list_fields = (
+        "executive_summary",
+        "risk_factors",
+        "bull_case",
+        "bear_case",
+        "open_questions",
+    )
+    for field in required_string_fields:
+        if not isinstance(sections.get(field), str) or not sections[field].strip():
+            msg = "LLM report draft must include valid report sections."
+            raise ValueError(msg)
+    for field in required_list_fields:
+        values = sections.get(field)
+        if not isinstance(values, list) or not values:
+            msg = "LLM report draft must include valid report sections."
+            raise ValueError(msg)
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            msg = "LLM report draft must include valid report sections."
+            raise ValueError(msg)
+    if not isinstance(warnings, list):
+        msg = "LLM report draft warnings must be a list."
+        raise ValueError(msg)
+
+    return {"sections": sections, "warnings": warnings}
+
+
+def _report_evidence(state: FinSightState) -> dict[str, Any]:
+    return {
+        "company_name": state.get("company_name"),
+        "ticker": state.get("ticker"),
+        "latest_10k": state.get("latest_10k"),
+        "latest_10q": state.get("latest_10q"),
+        "financial_metrics": state.get("financial_metrics"),
+        "risk_themes": state.get("risk_themes", []),
+        "research_insights": state.get("research_insights"),
+        "sources": state.get("sources", []),
+        "warnings": state.get("warnings", []),
+    }
 
 
 def _risk_analysis_message(themes: list[dict[str, Any]], used_llm: bool) -> str:

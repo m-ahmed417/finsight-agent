@@ -2,23 +2,122 @@ import json
 from typing import Any, Protocol
 
 from langchain.chat_models import init_chat_model
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from finsight_agent.app.config import Settings, get_settings
 from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
+
+MAX_RISK_FACTOR_TEXT_CHARS = 12000
 
 
 class LLMClient(Protocol):
     def summarize_risks(self, risk_factors: list[dict[str, Any]]) -> dict[str, Any]:
         """Return structured risk themes from extracted risk-factor text."""
 
+    def draft_report(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        """Return structured report sections from validated research evidence."""
+
 
 class LLMClientError(RuntimeError):
     """Raised when an LLM provider returns unusable output."""
 
 
+class RiskThemeLLMOutput(BaseModel):
+    title: str
+    summary: str
+
+    @field_validator("title", "summary")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            msg = "Risk theme fields cannot be blank."
+            raise ValueError(msg)
+        return normalized
+
+
+class RiskSummaryLLMResponse(BaseModel):
+    themes: list[RiskThemeLLMOutput] = Field(min_length=1)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ReportDraftLLMResponse(BaseModel):
+    executive_summary: list[str] = Field(min_length=1)
+    financial_performance: str
+    risk_factors: list[str] = Field(min_length=1)
+    bull_case: list[str] = Field(min_length=1)
+    bear_case: list[str] = Field(min_length=1)
+    open_questions: list[str] = Field(min_length=1)
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("financial_performance")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            msg = "Report draft text cannot be blank."
+            raise ValueError(msg)
+        return normalized
+
+    @field_validator(
+        "executive_summary",
+        "risk_factors",
+        "bull_case",
+        "bear_case",
+        "open_questions",
+    )
+    @classmethod
+    def list_items_must_not_be_blank(cls, value: list[str]) -> list[str]:
+        normalized_items = [" ".join(item.strip().split()) for item in value]
+        if any(not item for item in normalized_items):
+            msg = "Report draft list items cannot be blank."
+            raise ValueError(msg)
+        return normalized_items
+
+
 class MockLLMClient:
     def summarize_risks(self, risk_factors: list[dict[str, Any]]) -> dict[str, Any]:
         return analyze_risk_factors(risk_factors)
+
+    def draft_report(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        insights = evidence.get("research_insights") or {}
+        periods = (evidence.get("financial_metrics") or {}).get("periods", [])
+        latest_period = periods[-1] if periods else {}
+        fiscal_year = latest_period.get("fy", "latest available period")
+        revenue = latest_period.get("revenue", "N/A")
+        free_cash_flow = latest_period.get("free_cash_flow", "N/A")
+        risk_themes = evidence.get("risk_themes") or []
+
+        return {
+            "sections": {
+                "executive_summary": insights.get("executive_summary")
+                or [
+                    f"{evidence.get('company_name', 'The company')} ({evidence.get('ticker', 'UNKNOWN')}) was reviewed using available SEC-derived evidence."
+                ],
+                "financial_performance": (
+                    f"For fiscal {fiscal_year}, extracted revenue was {revenue} "
+                    f"and free cash flow was {free_cash_flow}."
+                ),
+                "risk_factors": [
+                    f"{theme.get('title', 'Risk theme')}: {theme.get('summary', 'No summary available.')}"
+                    for theme in risk_themes
+                ]
+                or ["No source-grounded risk themes were available."],
+                "bull_case": [
+                    _research_point_to_text(point)
+                    for point in insights.get("bull_case", [])
+                ]
+                or ["No deterministic bull-case points were available."],
+                "bear_case": [
+                    _research_point_to_text(point)
+                    for point in insights.get("bear_case", [])
+                ]
+                or ["No deterministic bear-case points were available."],
+                "open_questions": insights.get("open_questions")
+                or ["Which additional source evidence should be reviewed?"],
+            },
+            "warnings": [],
+        }
 
 
 class ChatModelLLMClient:
@@ -27,6 +126,9 @@ class ChatModelLLMClient:
         self._model_name = model_name
 
     def summarize_risks(self, risk_factors: list[dict[str, Any]]) -> dict[str, Any]:
+        prepared_risk_factors, truncation_warnings = _prepare_risk_factors_for_llm(
+            risk_factors
+        )
         response = self._chat_model.invoke(
             [
                 {
@@ -52,7 +154,7 @@ class ChatModelLLMClient:
                                 ],
                                 "warnings": ["optional string warnings"],
                             },
-                            "risk_factors": risk_factors,
+                            "risk_factors": prepared_risk_factors,
                         },
                         sort_keys=True,
                     ),
@@ -60,7 +162,48 @@ class ChatModelLLMClient:
             ]
         )
         data = _parse_llm_json_response(response)
-        return _normalize_risk_theme_response(data, risk_factors)
+        result = _normalize_risk_theme_response(data, risk_factors)
+        return {
+            "themes": result["themes"],
+            "warnings": [*truncation_warnings, *result["warnings"]],
+        }
+
+    def draft_report(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        response = self._chat_model.invoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a neutral equity research assistant. Draft "
+                        "source-grounded research brief sections only from the "
+                        "provided evidence. Do not provide financial advice, "
+                        "recommendations, price predictions, or unsupported facts. "
+                        "Return only valid JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": "Draft source-grounded research brief sections.",
+                            "required_schema": {
+                                "executive_summary": ["string"],
+                                "financial_performance": "string",
+                                "risk_factors": ["string"],
+                                "bull_case": ["string"],
+                                "bear_case": ["string"],
+                                "open_questions": ["string"],
+                                "warnings": ["optional string warnings"],
+                            },
+                            "evidence": evidence,
+                        },
+                        sort_keys=True,
+                    ),
+                },
+            ]
+        )
+        data = _parse_llm_json_response(response)
+        return _normalize_report_draft_response(data)
 
 
 def get_llm_client(settings: Settings | None = None) -> LLMClient:
@@ -134,32 +277,96 @@ def _normalize_risk_theme_response(
     data: dict[str, Any],
     risk_factors: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    themes = data.get("themes")
-    warnings = data.get("warnings", [])
-    if not isinstance(themes, list):
-        msg = "LLM risk response must include a themes list."
-        raise LLMClientError(msg)
-    if not isinstance(warnings, list):
-        msg = "LLM risk response warnings must be a list."
-        raise LLMClientError(msg)
+    try:
+        parsed = RiskSummaryLLMResponse.model_validate(data)
+    except ValidationError as exc:
+        if data.get("themes") == []:
+            msg = "LLM risk analysis must include at least one theme."
+        else:
+            msg = "LLM risk response must include valid risk themes."
+        raise LLMClientError(msg) from exc
 
     source = risk_factors[0] if risk_factors else {}
-    normalized_themes = [
-        _normalize_theme(theme, source)
-        for theme in themes
-        if isinstance(theme, dict)
-    ]
+    normalized_themes = [_normalize_theme(theme, source) for theme in parsed.themes]
 
-    return {"themes": normalized_themes, "warnings": warnings}
-
-
-def _normalize_theme(theme: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     return {
-        "title": str(theme.get("title", "Risk theme")),
-        "summary": str(theme.get("summary", "No summary available.")),
-        "source_form": theme.get("source_form") or source.get("form"),
-        "filing_date": theme.get("filing_date") or source.get("filing_date"),
-        "accession_number": theme.get("accession_number")
-        or source.get("accession_number"),
-        "source_url": theme.get("source_url") or source.get("source_url"),
+        "themes": normalized_themes,
+        "warnings": [_llm_warning(warning) for warning in parsed.warnings],
     }
+
+
+def _normalize_report_draft_response(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        parsed = ReportDraftLLMResponse.model_validate(data)
+    except ValidationError as exc:
+        msg = "LLM report draft must include valid report sections."
+        raise LLMClientError(msg) from exc
+
+    return {
+        "sections": {
+            "executive_summary": parsed.executive_summary,
+            "financial_performance": parsed.financial_performance,
+            "risk_factors": parsed.risk_factors,
+            "bull_case": parsed.bull_case,
+            "bear_case": parsed.bear_case,
+            "open_questions": parsed.open_questions,
+        },
+        "warnings": [_llm_warning(warning) for warning in parsed.warnings],
+    }
+
+
+def _normalize_theme(
+    theme: RiskThemeLLMOutput,
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "title": theme.title,
+        "summary": theme.summary,
+        "source_form": source.get("form"),
+        "filing_date": source.get("filing_date"),
+        "accession_number": source.get("accession_number"),
+        "source_url": source.get("source_url"),
+    }
+
+
+def _prepare_risk_factors_for_llm(
+    risk_factors: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    prepared: list[dict[str, Any]] = []
+    warnings: list[dict[str, str]] = []
+    truncated = False
+    for risk_factor in risk_factors:
+        prepared_risk_factor = dict(risk_factor)
+        text = str(prepared_risk_factor.get("text", ""))
+        if len(text) > MAX_RISK_FACTOR_TEXT_CHARS:
+            prepared_risk_factor["text"] = text[:MAX_RISK_FACTOR_TEXT_CHARS]
+            truncated = True
+        prepared.append(prepared_risk_factor)
+
+    if truncated:
+        warnings.append(
+            {
+                "code": "llm_input_truncated",
+                "message": (
+                    "Risk-factor text was truncated to "
+                    f"{MAX_RISK_FACTOR_TEXT_CHARS} characters before LLM analysis."
+                ),
+                "severity": "warning",
+            }
+        )
+
+    return prepared, warnings
+
+
+def _llm_warning(message: str) -> dict[str, str]:
+    return {
+        "code": "llm_risk_analysis_warning",
+        "message": message,
+        "severity": "warning",
+    }
+
+
+def _research_point_to_text(point: dict[str, Any]) -> str:
+    title = point.get("title", "Research point")
+    summary = point.get("summary", "No summary available.")
+    return f"{title}: {summary}"

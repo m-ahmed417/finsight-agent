@@ -62,10 +62,36 @@ class FakeLLMClient:
             "warnings": [],
         }
 
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": "LLM-written graph financial performance.",
+                "risk_factors": ["LLM-written graph risk factor."],
+                "bull_case": ["LLM-written graph bull case."],
+                "bear_case": ["LLM-written graph bear case."],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
 
 class FailingLLMClient:
     def summarize_risks(self, risk_factors: list[dict]) -> dict:
         raise RuntimeError("LLM unavailable")
+
+    def draft_report(self, evidence: dict) -> dict:
+        raise RuntimeError("LLM report drafting unavailable")
+
+
+class EmptyThemesLLMClient:
+    def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        return {"themes": [], "warnings": []}
+
+
+class InvalidReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {"sections": {"executive_summary": []}, "warnings": []}
 
 
 def load_fixture(name: str) -> dict:
@@ -222,6 +248,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "analyze_risks",
         "extract_metrics",
         "synthesize_research",
+        "draft_report",
         "generate_report",
         "compliance_check",
     ]
@@ -396,6 +423,15 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
         "status": "completed",
         "message": "Generated LLM-assisted risk themes from extracted 10-K text.",
     } in result["agent_steps"]
+    assert result["llm_report_sections"]["executive_summary"] == [
+        "LLM-written graph summary."
+    ]
+    assert "LLM-written graph bull case." in result["final_report"]
+    assert {
+        "node_name": "draft_report",
+        "status": "completed",
+        "message": "Generated LLM-assisted report sections from structured evidence.",
+    } in result["agent_steps"]
 
 
 def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails() -> None:
@@ -426,4 +462,63 @@ def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails
         "node_name": "analyze_risks",
         "status": "completed",
         "message": "Generated deterministic risk themes from extracted 10-K text.",
+    } in result["agent_steps"]
+
+
+def test_research_graph_falls_back_when_llm_returns_empty_themes() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=EmptyThemesLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["risk_themes"][0]["title"] == "Competitive pressure"
+    assert {
+        "code": "llm_risk_analysis_unavailable",
+        "message": "LLM risk analysis must include at least one theme.",
+        "severity": "warning",
+    } in result["warnings"]
+
+
+def test_research_graph_falls_back_when_llm_report_draft_is_invalid() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=InvalidReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["llm_report_sections"] is None
+    assert "LLM-written graph bull case." not in result["final_report"]
+    assert "Revenue growth" in result["final_report"]
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": "LLM report draft must include valid report sections.",
+        "severity": "warning",
+    } in result["warnings"]
+    assert {
+        "node_name": "draft_report",
+        "status": "completed",
+        "message": "Using deterministic report generator after LLM report drafting failed.",
     } in result["agent_steps"]
