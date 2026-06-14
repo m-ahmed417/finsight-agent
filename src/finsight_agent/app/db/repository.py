@@ -1,8 +1,9 @@
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from finsight_agent.app.db.models import ResearchRun, utc_now
+from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
 
 
 class ResearchRunRepository:
@@ -31,9 +32,28 @@ class ResearchRunRepository:
             completed_at=utc_now(),
         )
         self._session.add(run)
+        self._session.flush()
+        for step in graph_result.get("agent_steps", []):
+            self._session.add(
+                AgentStep(
+                    research_run_id=str(run_id),
+                    node_name=step["node_name"],
+                    status=step["status"],
+                    message=step.get("message"),
+                    error_message=step.get("error_message"),
+                )
+            )
         self._session.commit()
         self._session.refresh(run)
         return run
 
     def get_by_id(self, run_id: UUID) -> ResearchRun | None:
         return self._session.get(ResearchRun, str(run_id))
+
+    def get_steps_for_run(self, run_id: UUID) -> list[AgentStep]:
+        statement = (
+            select(AgentStep)
+            .where(AgentStep.research_run_id == str(run_id))
+            .order_by(AgentStep.id)
+        )
+        return list(self._session.scalars(statement))

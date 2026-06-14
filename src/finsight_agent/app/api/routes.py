@@ -8,11 +8,12 @@ from finsight_agent.app.api.dependencies import (
     get_research_graph_runner,
 )
 from finsight_agent.app.api.schemas import (
+    AgentStepResponse,
     HealthResponse,
     ResearchRequest,
     ResearchResponse,
 )
-from finsight_agent.app.db.models import ResearchRun
+from finsight_agent.app.db.models import AgentStep, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunRepository
 
 router = APIRouter()
@@ -57,6 +58,21 @@ def get_research(
     return _research_run_to_response(run)
 
 
+@router.get("/research/{run_id}/steps", response_model=list[AgentStepResponse])
+def get_research_steps(
+    run_id: UUID,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> list[AgentStepResponse]:
+    run = repository.get_by_id(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        )
+
+    return [_agent_step_to_response(step) for step in repository.get_steps_for_run(run_id)]
+
+
 def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
     return ResearchResponse(
         run_id=UUID(run.id),
@@ -69,4 +85,15 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
         warnings=run.warnings_json,
         errors=run.errors_json,
         sources=run.sources_json,
+    )
+
+
+def _agent_step_to_response(step: AgentStep) -> AgentStepResponse:
+    return AgentStepResponse(
+        id=step.id,
+        research_run_id=step.research_run_id,
+        node_name=step.node_name,
+        status=step.status,
+        message=step.message,
+        error_message=step.error_message,
     )

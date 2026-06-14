@@ -30,10 +30,23 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
             "warnings": [],
             "errors": [],
             "sources": [],
+            "agent_steps": [
+                {
+                    "node_name": "resolve_company",
+                    "status": "completed",
+                    "message": "Resolved AAPL to Apple Inc.",
+                },
+                {
+                    "node_name": "fetch_sec_data",
+                    "status": "completed",
+                    "message": "Fetched SEC submissions and company facts.",
+                },
+            ],
             "final_report": None,
         },
     )
     retrieved = repository.get_by_id(run_id)
+    steps = repository.get_steps_for_run(run_id)
 
     assert retrieved is not None
     assert retrieved.id == str(run_id)
@@ -49,6 +62,9 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert retrieved.sources_json == []
     assert retrieved.completed_at is not None
     assert created.id == retrieved.id
+    assert [step.node_name for step in steps] == ["resolve_company", "fetch_sec_data"]
+    assert [step.status for step in steps] == ["completed", "completed"]
+    assert steps[0].message == "Resolved AAPL to Apple Inc."
 
     session.close()
 
@@ -57,5 +73,13 @@ def test_repository_returns_none_for_unknown_run_id(tmp_path) -> None:
     repository, session = make_repository(tmp_path)
 
     assert repository.get_by_id(uuid4()) is None
+
+    session.close()
+
+
+def test_repository_returns_empty_steps_for_unknown_run_id(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+
+    assert repository.get_steps_for_run(uuid4()) == []
 
     session.close()

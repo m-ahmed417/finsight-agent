@@ -54,12 +54,29 @@ class FakeResearchRepository:
             warnings_json=graph_result.get("warnings", []),
             errors_json=graph_result.get("errors", []),
             sources_json=graph_result.get("sources", []),
+            agent_steps=graph_result.get("agent_steps", []),
         )
         self.runs[run_id] = run
         return run
 
     def get_by_id(self, run_id: UUID) -> SimpleNamespace | None:
         return self.runs.get(run_id)
+
+    def get_steps_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
+        run = self.runs.get(run_id)
+        if run is None:
+            return []
+        return [
+            SimpleNamespace(
+                id=index,
+                research_run_id=str(run_id),
+                node_name=step["node_name"],
+                status=step["status"],
+                message=step.get("message"),
+                error_message=step.get("error_message"),
+            )
+            for index, step in enumerate(run.agent_steps, start=1)
+        ]
 
 
 @pytest.fixture
@@ -76,10 +93,18 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
         {
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
+            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "warnings": [],
             "errors": [],
             "sources": [],
+            "agent_steps": [
+                {
+                    "node_name": "resolve_company",
+                    "status": "completed",
+                    "message": "Resolved AAPL to Apple Inc.",
+                }
+            ],
         }
     )
     app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
@@ -94,7 +119,7 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
     assert body["ticker"] == "AAPL"
     assert body["company_name"] == "Apple Inc."
     assert body["financial_metrics"]["periods"][0]["revenue"] == 1250000000
-    assert body["report"] is None
+    assert body["report"] == "# FinSight Research Brief: Apple Inc. (AAPL)"
     assert body["warnings"] == []
     assert body["errors"] == []
     assert graph_runner.invocations == [{"user_query": "AAPL"}]
@@ -163,10 +188,18 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
         {
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
+            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "warnings": [],
             "errors": [],
             "sources": [],
+            "agent_steps": [
+                {
+                    "node_name": "resolve_company",
+                    "status": "completed",
+                    "message": "Resolved AAPL to Apple Inc.",
+                }
+            ],
         }
     )
     app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
@@ -185,10 +218,72 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
     assert body["ticker"] == "AAPL"
 
 
+def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    graph_runner = FakeGraphRunner(
+        {
+            "ticker": "AAPL",
+            "company_name": "Apple Inc.",
+            "financial_metrics": {"periods": []},
+            "warnings": [],
+            "errors": [],
+            "sources": [],
+            "agent_steps": [
+                {
+                    "node_name": "resolve_company",
+                    "status": "completed",
+                    "message": "Resolved AAPL to Apple Inc.",
+                },
+                {
+                    "node_name": "fetch_sec_data",
+                    "status": "completed",
+                    "message": "Fetched SEC submissions and company facts.",
+                },
+            ],
+        }
+    )
+    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+
+    response = client.get(f"/research/{run_id}/steps")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": 1,
+            "research_run_id": run_id,
+            "node_name": "resolve_company",
+            "status": "completed",
+            "message": "Resolved AAPL to Apple Inc.",
+            "error_message": None,
+        },
+        {
+            "id": 2,
+            "research_run_id": run_id,
+            "node_name": "fetch_sec_data",
+            "status": "completed",
+            "message": "Fetched SEC submissions and company facts.",
+            "error_message": None,
+        },
+    ]
+
+
 def test_get_research_returns_404_for_unknown_run_id(client: TestClient) -> None:
     repository = FakeResearchRepository()
     app.dependency_overrides[get_research_repository] = lambda: repository
 
     response = client.get(f"/research/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+def test_get_research_steps_returns_404_for_unknown_run_id(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{uuid4()}/steps")
 
     assert response.status_code == 404

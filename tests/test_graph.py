@@ -52,6 +52,18 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert result["latest_10q"]["accession_number"] == "0000320193-24-000099"
     assert result["financial_metrics"]["periods"][1]["revenue"] == 1250000000
     assert result["financial_metrics"]["periods"][1]["free_cash_flow"] == 280000000
+    assert "# FinSight Research Brief: Apple Inc. (AAPL)" in result["final_report"]
+    assert "## 5. Key Financial Metrics" in result["final_report"]
+    assert result["compliance_status"] == "allowed"
+    assert [step["node_name"] for step in result["agent_steps"]] == [
+        "resolve_company",
+        "fetch_sec_data",
+        "identify_filings",
+        "extract_metrics",
+        "generate_report",
+        "compliance_check",
+    ]
+    assert all(step["status"] == "completed" for step in result["agent_steps"])
     assert result["errors"] == []
 
 
@@ -70,6 +82,13 @@ def test_research_graph_stops_when_company_is_not_found() -> None:
             "code": "company_not_found",
             "message": "Could not confidently resolve the company.",
             "severity": "error",
+        }
+    ]
+    assert result["agent_steps"] == [
+        {
+            "node_name": "resolve_company",
+            "status": "failed",
+            "message": "Could not confidently resolve the company.",
         }
     ]
 
@@ -105,6 +124,13 @@ def test_research_graph_stops_when_company_is_ambiguous() -> None:
         },
     ]
     assert result["errors"][0]["code"] == "company_ambiguous"
+    assert result["agent_steps"] == [
+        {
+            "node_name": "resolve_company",
+            "status": "failed",
+            "message": "Multiple companies matched the query.",
+        }
+    ]
 
 
 def test_research_graph_records_sec_fetch_failure() -> None:
@@ -126,3 +152,8 @@ def test_research_graph_records_sec_fetch_failure() -> None:
             "severity": "error",
         }
     ]
+    assert result["agent_steps"][-1] == {
+        "node_name": "fetch_sec_data",
+        "status": "failed",
+        "message": "SEC unavailable",
+    }

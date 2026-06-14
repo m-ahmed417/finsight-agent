@@ -32,3 +32,12 @@ class ResearchResponse(BaseModel):
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentStepResponse(BaseModel):
+    id: int
+    research_run_id: str
+    node_name: str
+    status: str
+    message: str | None = None
+    error_message: str | None = None
