@@ -7,6 +7,8 @@ def test_settings_load_default_values(monkeypatch) -> None:
     monkeypatch.delenv("SEC_USER_AGENT", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     settings = Settings(_env_file=None)
 
@@ -16,6 +18,8 @@ def test_settings_load_default_values(monkeypatch) -> None:
     assert settings.sec_user_agent == "FinSight/0.1 configured-via-env"
     assert settings.llm_provider == "mock"
     assert settings.llm_model == "mock"
+    assert settings.openai_api_key is None
+    assert settings.deepseek_api_key is None
 
 
 def test_settings_load_environment_overrides(monkeypatch) -> None:
@@ -24,6 +28,8 @@ def test_settings_load_environment_overrides(monkeypatch) -> None:
     monkeypatch.setenv("SEC_USER_AGENT", "FinSightTest/0.1 test@example.com")
     monkeypatch.setenv("LLM_PROVIDER", "fake")
     monkeypatch.setenv("LLM_MODEL", "fake-model")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
 
     settings = Settings(_env_file=None)
 
@@ -32,6 +38,10 @@ def test_settings_load_environment_overrides(monkeypatch) -> None:
     assert settings.sec_user_agent == "FinSightTest/0.1 test@example.com"
     assert settings.llm_provider == "fake"
     assert settings.llm_model == "fake-model"
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == "openai-test-key"
+    assert settings.deepseek_api_key is not None
+    assert settings.deepseek_api_key.get_secret_value() == "deepseek-test-key"
 
 
 def test_get_settings_returns_cached_settings(monkeypatch) -> None:

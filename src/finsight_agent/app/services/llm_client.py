@@ -69,9 +69,11 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
     if provider == "mock":
         return MockLLMClient()
     if provider in {"openai", "deepseek"}:
+        api_key = _api_key_for_provider(configured_settings, provider)
         chat_model = init_chat_model(
             configured_settings.llm_model,
             model_provider=provider,
+            api_key=api_key,
         )
         return ChatModelLLMClient(
             chat_model=chat_model,
@@ -80,6 +82,21 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
 
     msg = f"Unsupported LLM provider: {configured_settings.llm_provider}"
     raise ValueError(msg)
+
+
+def _api_key_for_provider(settings: Settings, provider: str) -> Any:
+    api_key = getattr(settings, f"{provider}_api_key", None)
+    if api_key is None or not _api_key_value(api_key).strip():
+        env_var = f"{provider.upper()}_API_KEY"
+        msg = f"{env_var} must be configured when LLM_PROVIDER={provider}."
+        raise ValueError(msg)
+    return api_key
+
+
+def _api_key_value(api_key: Any) -> str:
+    if hasattr(api_key, "get_secret_value"):
+        return str(api_key.get_secret_value())
+    return str(api_key)
 
 
 def _parse_llm_json_response(response: Any) -> dict[str, Any]:

@@ -108,8 +108,10 @@ def test_chat_model_llm_client_rejects_invalid_json() -> None:
 def test_get_llm_client_builds_openai_provider(monkeypatch) -> None:
     calls = []
 
-    def fake_init_chat_model(model: str, model_provider: str):
-        calls.append({"model": model, "model_provider": model_provider})
+    def fake_init_chat_model(model: str, model_provider: str, api_key: str):
+        calls.append(
+            {"model": model, "model_provider": model_provider, "api_key": api_key}
+        )
         return FakeChatModel('{"themes": []}')
 
     monkeypatch.setattr(
@@ -118,18 +120,30 @@ def test_get_llm_client_builds_openai_provider(monkeypatch) -> None:
     )
 
     client = get_llm_client(
-        SimpleNamespace(llm_provider="openai", llm_model="gpt-test-model")
+        SimpleNamespace(
+            llm_provider="openai",
+            llm_model="gpt-test-model",
+            openai_api_key="openai-test-key",
+        )
     )
 
     assert isinstance(client, ChatModelLLMClient)
-    assert calls == [{"model": "gpt-test-model", "model_provider": "openai"}]
+    assert calls == [
+        {
+            "model": "gpt-test-model",
+            "model_provider": "openai",
+            "api_key": "openai-test-key",
+        }
+    ]
 
 
 def test_get_llm_client_builds_deepseek_provider(monkeypatch) -> None:
     calls = []
 
-    def fake_init_chat_model(model: str, model_provider: str):
-        calls.append({"model": model, "model_provider": model_provider})
+    def fake_init_chat_model(model: str, model_provider: str, api_key: str):
+        calls.append(
+            {"model": model, "model_provider": model_provider, "api_key": api_key}
+        )
         return FakeChatModel('{"themes": []}')
 
     monkeypatch.setattr(
@@ -138,11 +152,32 @@ def test_get_llm_client_builds_deepseek_provider(monkeypatch) -> None:
     )
 
     client = get_llm_client(
-        SimpleNamespace(llm_provider="deepseek", llm_model="deepseek-test-model")
+        SimpleNamespace(
+            llm_provider="deepseek",
+            llm_model="deepseek-test-model",
+            deepseek_api_key="deepseek-test-key",
+        )
     )
 
     assert isinstance(client, ChatModelLLMClient)
-    assert calls == [{"model": "deepseek-test-model", "model_provider": "deepseek"}]
+    assert calls == [
+        {
+            "model": "deepseek-test-model",
+            "model_provider": "deepseek",
+            "api_key": "deepseek-test-key",
+        }
+    ]
+
+
+def test_get_llm_client_rejects_missing_provider_api_key() -> None:
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY must be configured"):
+        get_llm_client(
+            SimpleNamespace(
+                llm_provider="deepseek",
+                llm_model="deepseek-test-model",
+                deepseek_api_key="",
+            )
+        )
 
 
 def test_get_llm_client_rejects_unknown_provider() -> None:

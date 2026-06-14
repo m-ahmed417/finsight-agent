@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     )
     llm_provider: str = Field(default="mock", validation_alias="LLM_PROVIDER")
     llm_model: str = Field(default="mock", validation_alias="LLM_MODEL")
+    openai_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="OPENAI_API_KEY",
+    )
+    deepseek_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="DEEPSEEK_API_KEY",
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
