@@ -24,6 +24,22 @@ Run the API locally:
 uv run uvicorn finsight_agent.app.main:app --reload
 ```
 
+## Configuration
+
+Core environment variables:
+
+```powershell
+APP_ENV=local
+DATABASE_URL=sqlite:///./finsight.db
+SEC_USER_AGENT=FinSight/0.1 your-email@example.com
+LLM_PROVIDER=mock
+LLM_MODEL=mock
+```
+
+`LLM_PROVIDER` supports `mock`, `openai`, and `deepseek`. Keep `mock` for
+deterministic local development and tests. Real providers should be configured
+with a matching `LLM_MODEL` and provider API credentials in the environment.
+
 ## Database Migrations
 
 FinSight uses Alembic for database schema migrations.

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
         validation_alias="SEC_USER_AGENT",
     )
     llm_provider: str = Field(default="mock", validation_alias="LLM_PROVIDER")
+    llm_model: str = Field(default="mock", validation_alias="LLM_MODEL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
