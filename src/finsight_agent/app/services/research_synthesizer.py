@@ -1,5 +1,7 @@
 from typing import Any
 
+SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
+
 
 def synthesize_research_insights(
     *,
@@ -37,11 +39,11 @@ def _executive_summary(
     return summary
 
 
-def _bull_case(latest_period: dict[str, Any] | None) -> list[dict[str, str]]:
+def _bull_case(latest_period: dict[str, Any] | None) -> list[dict[str, Any]]:
     if latest_period is None:
         return []
 
-    points: list[dict[str, str]] = []
+    points: list[dict[str, Any]] = []
     fiscal_year = latest_period.get("fy", "the latest available fiscal year")
     revenue_growth = latest_period.get("revenue_growth")
     if isinstance(revenue_growth, int | float) and revenue_growth > 0:
@@ -53,6 +55,7 @@ def _bull_case(latest_period: dict[str, Any] | None) -> list[dict[str, str]]:
                     f"in fiscal {fiscal_year}."
                 ),
                 "source": "SEC company facts",
+                "source_ids": [SEC_COMPANY_FACTS_SOURCE_ID],
             }
         )
 
@@ -65,13 +68,14 @@ def _bull_case(latest_period: dict[str, Any] | None) -> list[dict[str, str]]:
                     f"Extracted free cash flow was {free_cash_flow} in fiscal {fiscal_year}."
                 ),
                 "source": "SEC company facts",
+                "source_ids": [SEC_COMPANY_FACTS_SOURCE_ID],
             }
         )
 
     return points
 
 
-def _bear_case(risk_themes: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _bear_case(risk_themes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "title": str(theme.get("title", "Risk theme")),
@@ -80,6 +84,7 @@ def _bear_case(risk_themes: list[dict[str, Any]]) -> list[dict[str, str]]:
                 f"{theme.get('summary', 'No summary available.')}"
             ),
             "source": _risk_theme_source(theme),
+            "source_ids": _source_ids(theme),
         }
         for theme in risk_themes
     ]
@@ -111,3 +116,15 @@ def _risk_theme_source(theme: dict[str, Any]) -> str:
     filing_date = theme.get("filing_date", "unknown date")
     accession_number = theme.get("accession_number", "unknown accession")
     return f"{source_form} filed {filing_date}, accession {accession_number}"
+
+
+def _source_ids(source: dict[str, Any]) -> list[str]:
+    values = source.get("source_ids")
+    if not isinstance(values, list):
+        return []
+
+    return [
+        normalized
+        for value in values
+        if (normalized := str(value).strip())
+    ]

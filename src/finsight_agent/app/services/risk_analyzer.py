@@ -93,4 +93,22 @@ def _theme_from_rule(rule: dict[str, Any], risk_factor: dict[str, Any]) -> dict[
         "filing_date": risk_factor.get("filing_date"),
         "accession_number": risk_factor.get("accession_number"),
         "source_url": risk_factor.get("source_url"),
+        "source_ids": _source_ids(risk_factor),
     }
+
+
+def _source_ids(source: dict[str, Any]) -> list[str]:
+    values = source.get("source_ids")
+    if isinstance(values, list):
+        return [
+            normalized
+            for value in values
+            if (normalized := str(value).strip())
+        ]
+
+    value = source.get("source_id")
+    if value is None:
+        return []
+
+    normalized = str(value).strip()
+    return [normalized] if normalized else []

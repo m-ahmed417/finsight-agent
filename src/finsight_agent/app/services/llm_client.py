@@ -96,10 +96,14 @@ class MockLLMClient:
                 ],
                 "financial_performance": (
                     f"For fiscal {fiscal_year}, extracted revenue was {revenue} "
-                    f"and free cash flow was {free_cash_flow}."
+                    f"and free cash flow was {free_cash_flow}. [sec_company_facts]"
                 ),
                 "risk_factors": [
-                    f"{theme.get('title', 'Risk theme')}: {theme.get('summary', 'No summary available.')}"
+                    (
+                        f"{theme.get('title', 'Risk theme')}: "
+                        f"{theme.get('summary', 'No summary available.')}"
+                        f"{_citation_suffix(theme.get('source_ids'))}"
+                    )
                     for theme in risk_themes
                 ]
                 or ["No source-grounded risk themes were available."],
@@ -178,7 +182,8 @@ class ChatModelLLMClient:
                         "source-grounded research brief sections only from the "
                         "provided evidence. Do not provide financial advice, "
                         "recommendations, price predictions, or unsupported facts. "
-                        "Return only valid JSON."
+                        "Use source_id citation markers from the evidence where "
+                        "available. Return only valid JSON."
                     ),
                 },
                 {
@@ -326,6 +331,7 @@ def _normalize_theme(
         "filing_date": source.get("filing_date"),
         "accession_number": source.get("accession_number"),
         "source_url": source.get("source_url"),
+        "source_ids": _source_ids(source),
     }
 
 
@@ -369,4 +375,21 @@ def _llm_warning(message: str) -> dict[str, str]:
 def _research_point_to_text(point: dict[str, Any]) -> str:
     title = point.get("title", "Research point")
     summary = point.get("summary", "No summary available.")
-    return f"{title}: {summary}"
+    return f"{title}: {summary}{_citation_suffix(point.get('source_ids'))}"
+
+
+def _source_ids(source: dict[str, Any]) -> list[str]:
+    values = source.get("source_ids")
+    if not isinstance(values, list):
+        return []
+
+    return [
+        normalized
+        for value in values
+        if (normalized := str(value).strip())
+    ]
+
+
+def _citation_suffix(source_ids: Any) -> str:
+    citations = [f"[{source_id}]" for source_id in _source_ids({"source_ids": source_ids})]
+    return f" {' '.join(citations)}" if citations else ""

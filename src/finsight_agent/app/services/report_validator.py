@@ -1,4 +1,6 @@
+import re
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -25,11 +27,20 @@ CONTENT_SECTIONS = (
     "## 8. Bear Case",
 )
 
+CITATION_REQUIRED_SECTIONS = (
+    "## 4. Financial Performance",
+    "## 6. Risk Factors",
+    "## 7. Bull Case",
+    "## 8. Bear Case",
+)
+
 WEAK_SECTION_MARKERS = (
     "pending deterministic synthesis",
     "risk factor analysis has not been performed yet",
     "no sources were recorded",
 )
+
+CITATION_PATTERN = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*)\]")
 
 
 class ReportQualityStatus(StrEnum):
@@ -42,7 +53,11 @@ class ReportQualityResult(BaseModel):
     warnings: list[dict[str, str]] = Field(default_factory=list)
 
 
-def validate_report_quality(report: str | None) -> ReportQualityResult:
+def validate_report_quality(
+    report: str | None,
+    *,
+    sources: list[dict[str, Any]] | None = None,
+) -> ReportQualityResult:
     warnings: list[dict[str, str]] = []
     if not report:
         return ReportQualityResult(
@@ -73,6 +88,8 @@ def validate_report_quality(report: str | None) -> ReportQualityResult:
         )
 
     warnings.extend(_weak_section_warnings(report))
+    warnings.extend(_missing_citation_warnings(report))
+    warnings.extend(_unknown_citation_warnings(report, sources))
     unsafe_terms = find_forbidden_terms(report)
     if unsafe_terms:
         warnings.append(
@@ -112,6 +129,68 @@ def _weak_section_warnings(report: str) -> list[dict[str, str]]:
                 )
             )
     return warnings
+
+
+def _missing_citation_warnings(report: str) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    for section in CITATION_REQUIRED_SECTIONS:
+        section_text = _extract_section(report, section)
+        if not section_text:
+            continue
+        if not _extract_citations(section_text):
+            warnings.append(
+                _warning(
+                    "missing_section_citation",
+                    f"Report section is missing source_id citations: {section}.",
+                )
+            )
+    return warnings
+
+
+def _unknown_citation_warnings(
+    report: str,
+    sources: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    if sources is None:
+        return []
+
+    known_source_ids = _source_ids_from_sources(sources)
+    unknown_source_ids = [
+        source_id
+        for source_id in _extract_citations(report)
+        if source_id not in known_source_ids
+    ]
+
+    return [
+        _warning(
+            "unknown_report_citation",
+            f"Report cites unknown source_id: {source_id}.",
+        )
+        for source_id in sorted(set(unknown_source_ids))
+    ]
+
+
+def _extract_citations(text: str) -> list[str]:
+    citations: list[str] = []
+    seen: set[str] = set()
+    for match in CITATION_PATTERN.finditer(text):
+        source_id = match.group(1)
+        if source_id not in seen:
+            citations.append(source_id)
+            seen.add(source_id)
+    return citations
+
+
+def _source_ids_from_sources(sources: list[dict[str, Any]]) -> set[str]:
+    source_ids: set[str] = set()
+    for source in sources:
+        source_id = source.get("source_id")
+        if source_id is None:
+            continue
+        normalized = str(source_id).strip()
+        if normalized:
+            source_ids.add(normalized)
+    return source_ids
 
 
 def _extract_section(report: str, heading: str) -> str:

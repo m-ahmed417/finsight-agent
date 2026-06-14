@@ -19,6 +19,7 @@ def sample_risk_factors() -> list[dict]:
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
             "source_url": "https://www.sec.gov/filing.htm",
+            "source_ids": ["latest_10k"],
             "text": (
                 "The Company faces intense competition. Supply chain disruption "
                 "and component shortages could affect operations."
@@ -39,6 +40,7 @@ def test_mock_llm_client_returns_deterministic_structured_risk_themes() -> None:
     ]
     assert result["themes"][0]["source_form"] == "10-K"
     assert result["themes"][0]["accession_number"] == "0000320193-24-000123"
+    assert result["themes"][0]["source_ids"] == ["latest_10k"]
 
 
 def sample_report_evidence() -> dict:
@@ -59,19 +61,36 @@ def sample_report_evidence() -> dict:
             {
                 "title": "Competitive pressure",
                 "summary": "Competition could pressure operating performance.",
+                "source_ids": ["latest_10k"],
             }
         ],
         "research_insights": {
             "executive_summary": [
                 "Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
             ],
-            "bull_case": [{"title": "Revenue growth", "summary": "Revenue increased."}],
+            "bull_case": [
+                {
+                    "title": "Revenue growth",
+                    "summary": "Revenue increased.",
+                    "source_ids": ["sec_company_facts"],
+                }
+            ],
             "bear_case": [
-                {"title": "Competitive pressure", "summary": "Competition is a risk."}
+                {
+                    "title": "Competitive pressure",
+                    "summary": "Competition is a risk.",
+                    "source_ids": ["latest_10k"],
+                }
             ],
             "open_questions": ["Are revenue growth and cash flow durable?"],
         },
-        "sources": [{"label": "SEC company facts", "url": "https://example.com"}],
+        "sources": [
+            {
+                "source_id": "sec_company_facts",
+                "label": "SEC company facts",
+                "url": "https://example.com",
+            }
+        ],
         "warnings": [],
     }
 
@@ -86,10 +105,11 @@ def test_mock_llm_client_returns_deterministic_report_sections() -> None:
         "Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
     ]
     assert result["sections"]["financial_performance"] == (
-        "For fiscal 2024, extracted revenue was 1250000000 and free cash flow was 280000000."
+        "For fiscal 2024, extracted revenue was 1250000000 "
+        "and free cash flow was 280000000. [sec_company_facts]"
     )
     assert result["sections"]["risk_factors"] == [
-        "Competitive pressure: Competition could pressure operating performance."
+        "Competitive pressure: Competition could pressure operating performance. [latest_10k]"
     ]
 
 
@@ -140,6 +160,7 @@ def test_chat_model_llm_client_parses_structured_risk_themes() -> None:
                 "filing_date": "2024-11-01",
                 "accession_number": "0000320193-24-000123",
                 "source_url": "https://www.sec.gov/filing.htm",
+                "source_ids": ["latest_10k"],
             }
         ],
         "warnings": [],
@@ -157,6 +178,7 @@ def test_chat_model_llm_client_truncates_large_risk_factor_text() -> None:
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
             "source_url": "https://www.sec.gov/filing.htm",
+            "source_ids": ["latest_10k"],
             "text": long_text,
         }
     ]
@@ -178,6 +200,7 @@ def test_chat_model_llm_client_truncates_large_risk_factor_text() -> None:
     user_payload = json.loads(chat_model.messages[1]["content"])
 
     assert len(user_payload["risk_factors"][0]["text"]) == MAX_RISK_FACTOR_TEXT_CHARS
+    assert user_payload["risk_factors"][0]["source_ids"] == ["latest_10k"]
     assert result["warnings"] == [
         {
             "code": "llm_input_truncated",

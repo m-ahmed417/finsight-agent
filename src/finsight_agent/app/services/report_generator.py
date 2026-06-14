@@ -6,6 +6,10 @@ RESEARCH_ONLY_NOTICE = (
     "sell, or hold any security."
 )
 
+SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
+LATEST_10K_SOURCE_ID = "latest_10k"
+LATEST_10Q_SOURCE_ID = "latest_10q"
+
 
 def generate_research_report(
     *,
@@ -87,10 +91,11 @@ def _financial_performance_summary(
     net_income = _format_value(latest.get("net_income"))
     free_cash_flow = _format_value(latest.get("free_cash_flow"))
 
-    return (
+    summary = (
         f"For fiscal year {fiscal_year}, extracted revenue was {revenue}, "
         f"net income was {net_income}, and free cash flow was {free_cash_flow}."
     )
+    return f"{summary} {_format_citations([SEC_COMPANY_FACTS_SOURCE_ID])}"
 
 
 def _metrics_table(financial_metrics: dict[str, Any]) -> str:
@@ -126,13 +131,13 @@ def _sources_section(
     source_lines: list[str] = []
     if latest_10k:
         source_lines.append(
-            "- Latest 10-K: "
+            f"- [{LATEST_10K_SOURCE_ID}] Latest 10-K: "
             f"filed {latest_10k.get('filing_date')}, "
             f"accession {latest_10k.get('accession_number')}."
         )
     if latest_10q:
         source_lines.append(
-            "- Latest 10-Q: "
+            f"- [{LATEST_10Q_SOURCE_ID}] Latest 10-Q: "
             f"filed {latest_10q.get('filing_date')}, "
             f"accession {latest_10q.get('accession_number')}."
         )
@@ -187,9 +192,10 @@ def _format_research_point(point: dict[str, Any]) -> str:
     title = point.get("title", "Research point")
     summary = point.get("summary", "No summary available.")
     source = point.get("source")
+    citations = _format_citations(point.get("source_ids"))
     if source:
-        return f"- **{title}**: {summary} (Source: {source})"
-    return f"- **{title}**: {summary}"
+        return f"- **{title}**: {summary} (Source: {source}){_citation_suffix(citations)}"
+    return f"- **{title}**: {summary}{_citation_suffix(citations)}"
 
 
 def _open_questions_section(
@@ -230,11 +236,12 @@ def _risk_factors_section(
     latest = risk_factors[0]
     form = latest.get("form", "filing")
     filing_date = latest.get("filing_date", "an unknown date")
-    return (
+    summary = (
         f"Risk-factor text was retrieved from the latest {form} filed {filing_date}. "
         "A future LLM-assisted step will summarize this extracted text into "
         "source-grounded risk themes."
     )
+    return f"{summary}{_citation_suffix(_format_citations(latest.get('source_ids')))}"
 
 
 def _format_risk_theme(theme: dict[str, Any]) -> str:
@@ -243,10 +250,11 @@ def _format_risk_theme(theme: dict[str, Any]) -> str:
     source_form = theme.get("source_form", "filing")
     filing_date = theme.get("filing_date", "unknown date")
     accession_number = theme.get("accession_number", "unknown accession")
-    return (
+    summary_text = (
         f"- **{title}**: {summary} "
         f"({source_form} filed {filing_date}, accession {accession_number})"
     )
+    return f"{summary_text}{_citation_suffix(_format_citations(theme.get('source_ids')))}"
 
 
 def _limitations_section(warnings: list[dict[str, Any]]) -> str:
@@ -270,11 +278,33 @@ def _format_percentage(value: Any) -> str:
 
 def _format_source_line(source: dict[str, Any]) -> str:
     label = source.get("label") or source.get("source_type") or "Source"
+    source_id = str(source.get("source_id", "")).strip()
+    label_prefix = f"[{source_id}] " if source_id else ""
     url = source.get("url")
     if url:
-        return f"- {label}: {url}"
-    return f"- {label}"
+        return f"- {label_prefix}{label}: {url}"
+    return f"- {label_prefix}{label}"
 
 
 def _plain_bullet_section(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
+
+
+def _format_citations(source_ids: Any) -> str:
+    if not isinstance(source_ids, list):
+        return ""
+
+    citations: list[str] = []
+    seen: set[str] = set()
+    for source_id in source_ids:
+        normalized = str(source_id).strip()
+        if not normalized or normalized in seen:
+            continue
+        citations.append(f"[{normalized}]")
+        seen.add(normalized)
+
+    return " ".join(citations)
+
+
+def _citation_suffix(citations: str) -> str:
+    return f" {citations}" if citations else ""

@@ -61,6 +61,7 @@ class FakeLLMClient:
                     "filing_date": risk_factors[0]["filing_date"],
                     "accession_number": risk_factors[0]["accession_number"],
                     "source_url": risk_factors[0]["source_url"],
+                    "source_ids": risk_factors[0]["source_ids"],
                 }
             ],
             "warnings": [],
@@ -70,10 +71,12 @@ class FakeLLMClient:
         return {
             "sections": {
                 "executive_summary": ["LLM-written graph summary."],
-                "financial_performance": "LLM-written graph financial performance.",
-                "risk_factors": ["LLM-written graph risk factor."],
-                "bull_case": ["LLM-written graph bull case."],
-                "bear_case": ["LLM-written graph bear case."],
+                "financial_performance": (
+                    "LLM-written graph financial performance. [sec_company_facts]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
                 "open_questions": ["LLM-written graph open question."],
             },
             "warnings": [],
@@ -98,15 +101,35 @@ class InvalidReportDraftLLMClient(FakeLLMClient):
         return {"sections": {"executive_summary": []}, "warnings": []}
 
 
-class UnsafeReportDraftLLMClient(FakeLLMClient):
+class CitationlessReportDraftLLMClient(FakeLLMClient):
     def draft_report(self, evidence: dict) -> dict:
         return {
             "sections": {
                 "executive_summary": ["LLM-written graph summary."],
                 "financial_performance": "LLM-written graph financial performance.",
                 "risk_factors": ["LLM-written graph risk factor."],
-                "bull_case": ["You should buy this stock because growth is guaranteed."],
-                "bear_case": ["The price will crash if execution weakens."],
+                "bull_case": ["LLM-written graph bull case."],
+                "bear_case": ["LLM-written graph bear case."],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
+class UnsafeReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": (
+                    "LLM-written graph financial performance. [sec_company_facts]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": [
+                    "You should buy this stock because growth is guaranteed. "
+                    "[sec_company_facts]"
+                ],
+                "bear_case": ["The price will crash if execution weakens. [latest_10k]"],
                 "open_questions": ["LLM-written graph open question."],
             },
             "warnings": [],
@@ -118,10 +141,12 @@ class UnrewritableUnsafeReportDraftLLMClient(FakeLLMClient):
         return {
             "sections": {
                 "executive_summary": ["LLM-written graph summary."],
-                "financial_performance": "LLM-written graph financial performance.",
-                "risk_factors": ["LLM-written graph risk factor."],
-                "bull_case": ["This report includes buybuy wording."],
-                "bear_case": ["LLM-written graph bear case."],
+                "financial_performance": (
+                    "LLM-written graph financial performance. [sec_company_facts]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": ["This report includes buybuy wording. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
                 "open_questions": ["LLM-written graph open question."],
             },
             "warnings": [],
@@ -233,6 +258,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019324000123/aapl-20240928.htm"
             ),
+            "source_ids": ["latest_10k"],
             "text": (
                 "The Company faces intense competition in all markets in which it operates.\n"
                 "Supply chain disruption, component shortages, or manufacturing delays could\n"
@@ -255,6 +281,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019324000123/aapl-20240928.htm"
             ),
+            "source_ids": ["latest_10k"],
         },
         {
             "title": "Supply chain and manufacturing disruption",
@@ -269,6 +296,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019324000123/aapl-20240928.htm"
             ),
+            "source_ids": ["latest_10k"],
         },
         {
             "title": "Third-party platform and distribution dependence",
@@ -283,6 +311,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019324000123/aapl-20240928.htm"
             ),
+            "source_ids": ["latest_10k"],
         },
     ]
     assert result["research_insights"]["bull_case"] == [
@@ -292,14 +321,17 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
                 "Extracted revenue increased 25.00% year over year in fiscal 2024."
             ),
             "source": "SEC company facts",
+            "source_ids": ["sec_company_facts"],
         },
         {
             "title": "Positive free cash flow",
             "summary": "Extracted free cash flow was 280000000 in fiscal 2024.",
             "source": "SEC company facts",
+            "source_ids": ["sec_company_facts"],
         },
     ]
     assert result["research_insights"]["bear_case"][0]["title"] == "Competitive pressure"
+    assert result["research_insights"]["bear_case"][0]["source_ids"] == ["latest_10k"]
     assert result["sources"]
     submissions_source = source_by_type(result["sources"], "sec_submissions")
     company_facts_source = source_by_type(result["sources"], "sec_company_facts")
@@ -350,6 +382,8 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert filing_10q_source["accession_number"] == "0000320193-24-000099"
     assert "# FinSight Research Brief: Apple Inc. (AAPL)" in result["final_report"]
     assert "## 5. Key Financial Metrics" in result["final_report"]
+    assert "[sec_company_facts]" in result["final_report"]
+    assert "[latest_10k]" in result["final_report"]
     assert result["compliance_status"] == "allowed"
     assert [step["node_name"] for step in result["agent_steps"]] == [
         "resolve_company",
@@ -528,6 +562,7 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019324000123/aapl-20240928.htm"
             ),
+            "source_ids": ["latest_10k"],
         }
     ]
     assert {
@@ -636,6 +671,43 @@ def test_research_graph_falls_back_when_llm_report_draft_is_invalid() -> None:
     } in result["agent_steps"]
 
 
+def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=CitationlessReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["llm_report_sections"] is None
+    assert "LLM-written graph bull case." not in result["final_report"]
+    assert "[sec_company_facts]" in result["final_report"]
+    assert "[latest_10k]" in result["final_report"]
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": (
+            "LLM report draft must include known source_id citations in "
+            "source-grounded sections."
+        ),
+        "severity": "warning",
+    } in result["warnings"]
+    assert {
+        "node_name": "draft_report",
+        "status": "completed",
+        "message": "Using deterministic report generator after LLM report drafting failed.",
+    } in result["agent_steps"]
+
+
 def test_research_graph_rewrites_unsafe_llm_report_language() -> None:
     resolver = CompanyResolver(
         companies=[
@@ -672,6 +744,7 @@ def test_research_graph_rewrites_unsafe_llm_report_language() -> None:
         "status": "completed",
         "message": "Report required deterministic compliance rewrite and passed.",
     } in result["agent_steps"]
+    assert result["report_quality_status"] == "passed"
     assert {
         "node_name": "validate_report",
         "status": "completed",

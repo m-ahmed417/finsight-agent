@@ -9,6 +9,7 @@ def test_analyze_risk_factors_returns_grounded_themes() -> None:
                 "filing_date": "2024-11-01",
                 "accession_number": "0000320193-24-000123",
                 "source_url": "https://www.sec.gov/filing.htm",
+                "source_ids": ["latest_10k"],
                 "text": (
                     "The Company faces intense competition in all markets in which it operates.\n"
                     "Supply chain disruption, component shortages, or manufacturing delays could "
@@ -32,6 +33,7 @@ def test_analyze_risk_factors_returns_grounded_themes() -> None:
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
             "source_url": "https://www.sec.gov/filing.htm",
+            "source_ids": ["latest_10k"],
         },
         {
             "title": "Supply chain and manufacturing disruption",
@@ -43,6 +45,7 @@ def test_analyze_risk_factors_returns_grounded_themes() -> None:
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
             "source_url": "https://www.sec.gov/filing.htm",
+            "source_ids": ["latest_10k"],
         },
         {
             "title": "Third-party platform and distribution dependence",
@@ -54,6 +57,7 @@ def test_analyze_risk_factors_returns_grounded_themes() -> None:
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
             "source_url": "https://www.sec.gov/filing.htm",
+            "source_ids": ["latest_10k"],
         },
     ]
 

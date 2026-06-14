@@ -69,6 +69,11 @@ def test_generate_research_report_includes_metrics_table() -> None:
 
     assert "| Fiscal Year | Revenue | Revenue Growth | Operating Margin | Net Margin | Free Cash Flow |" in report
     assert "| 2024 | 1250000000 | 25.00% | 24.00% | 20.00% | 280000000 |" in report
+    assert (
+        "For fiscal year 2024, extracted revenue was 1250000000, "
+        "net income was 250000000, and free cash flow was 280000000. "
+        "[sec_company_facts]"
+    ) in report
 
 
 def test_generate_research_report_includes_limitations_from_warnings() -> None:
@@ -101,6 +106,7 @@ def test_generate_research_report_includes_source_labels_and_urls() -> None:
         warnings=[],
         sources=[
             {
+                "source_id": "sec_company_facts",
                 "label": "SEC company facts",
                 "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
             }
@@ -108,7 +114,7 @@ def test_generate_research_report_includes_source_labels_and_urls() -> None:
     )
 
     assert (
-        "- SEC company facts: "
+        "- [sec_company_facts] SEC company facts: "
         "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
     ) in report
 
@@ -155,6 +161,7 @@ def test_generate_research_report_includes_risk_themes() -> None:
                 "source_form": "10-K",
                 "filing_date": "2024-11-01",
                 "accession_number": "abc",
+                "source_ids": ["latest_10k"],
             }
         ],
     )
@@ -162,7 +169,7 @@ def test_generate_research_report_includes_risk_themes() -> None:
     assert (
         "- **Competitive pressure**: The filing describes competition as a material "
         "business risk that could pressure operating performance. "
-        "(10-K filed 2024-11-01, accession abc)"
+        "(10-K filed 2024-11-01, accession abc) [latest_10k]"
     ) in report
 
 
@@ -186,6 +193,7 @@ def test_generate_research_report_includes_synthesized_research_sections() -> No
                         "Extracted revenue increased 25.00% year over year in fiscal 2024."
                     ),
                     "source": "SEC company facts",
+                    "source_ids": ["sec_company_facts"],
                 }
             ],
             "bear_case": [
@@ -196,6 +204,7 @@ def test_generate_research_report_includes_synthesized_research_sections() -> No
                         "competition could pressure operating performance."
                     ),
                     "source": "10-K filed 2024-11-01, accession abc",
+                    "source_ids": ["latest_10k"],
                 }
             ],
             "open_questions": [
@@ -209,12 +218,12 @@ def test_generate_research_report_includes_synthesized_research_sections() -> No
     ) in report
     assert (
         "- **Revenue growth**: Extracted revenue increased 25.00% year over year "
-        "in fiscal 2024. (Source: SEC company facts)"
+        "in fiscal 2024. (Source: SEC company facts) [sec_company_facts]"
     ) in report
     assert (
         "- **Competitive pressure**: The bear case includes this source-grounded "
         "risk theme: competition could pressure operating performance. "
-        "(Source: 10-K filed 2024-11-01, accession abc)"
+        "(Source: 10-K filed 2024-11-01, accession abc) [latest_10k]"
     ) in report
     assert "- What changed in the latest annual filing compared with prior years?" in report
 

@@ -1,5 +1,6 @@
-from typing import Any
 from datetime import datetime, timezone
+import re
+from typing import Any
 
 from langgraph.graph import END, StateGraph
 
@@ -24,6 +25,13 @@ SEC_SUBMISSIONS_SOURCE_ID = "sec_submissions"
 SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
 LATEST_10K_SOURCE_ID = "latest_10k"
 LATEST_10Q_SOURCE_ID = "latest_10q"
+LLM_DRAFT_CITATION_PATTERN = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*)\]")
+LLM_SOURCE_GROUNDED_REPORT_FIELDS = (
+    "financial_performance",
+    "risk_factors",
+    "bull_case",
+    "bear_case",
+)
 
 
 def build_research_graph(
@@ -358,6 +366,7 @@ def _make_fetch_filing_text_node(sec_client: Any):
                     "filing_date": latest_10k.get("filing_date"),
                     "accession_number": accession_number,
                     "source_url": source_url,
+                    "source_ids": [LATEST_10K_SOURCE_ID],
                     "text": section.text,
                 }
             ],
@@ -476,7 +485,8 @@ def _make_draft_report_node(llm_client: Any | None):
 
         try:
             draft = _validate_report_draft(
-                llm_client.draft_report(_report_evidence(state))
+                llm_client.draft_report(_report_evidence(state)),
+                known_source_ids=_known_source_ids(state),
             )
         except Exception as exc:
             return {
@@ -612,7 +622,10 @@ def _compliance_warning_updates(warnings: list[str]) -> list[dict[str, str]]:
 
 
 def _validate_report(state: FinSightState) -> FinSightState:
-    result = validate_report_quality(state.get("final_report"))
+    result = validate_report_quality(
+        state.get("final_report"),
+        sources=state.get("sources", []),
+    )
     warnings = [
         *state.get("warnings", []),
         *[
@@ -698,7 +711,11 @@ def _validate_risk_analysis(analysis: Any) -> dict[str, Any]:
     return {"themes": themes, "warnings": warnings}
 
 
-def _validate_report_draft(draft: Any) -> dict[str, Any]:
+def _validate_report_draft(
+    draft: Any,
+    *,
+    known_source_ids: set[str] | None = None,
+) -> dict[str, Any]:
     if not isinstance(draft, dict):
         msg = "LLM report draft must return a dictionary."
         raise ValueError(msg)
@@ -731,8 +748,55 @@ def _validate_report_draft(draft: Any) -> dict[str, Any]:
     if not isinstance(warnings, list):
         msg = "LLM report draft warnings must be a list."
         raise ValueError(msg)
+    if known_source_ids is not None and not _has_required_llm_draft_citations(
+        sections,
+        known_source_ids,
+    ):
+        msg = (
+            "LLM report draft must include known source_id citations in "
+            "source-grounded sections."
+        )
+        raise ValueError(msg)
 
     return {"sections": sections, "warnings": warnings}
+
+
+def _has_required_llm_draft_citations(
+    sections: dict[str, Any],
+    known_source_ids: set[str],
+) -> bool:
+    for field in LLM_SOURCE_GROUNDED_REPORT_FIELDS:
+        section_citations = set().union(
+            *[
+                _extract_llm_draft_citations(value)
+                for value in _report_section_values(sections[field])
+            ]
+        )
+        if not section_citations.intersection(known_source_ids):
+            return False
+    return True
+
+
+def _report_section_values(value: str | list[str]) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    return value
+
+
+def _extract_llm_draft_citations(text: str) -> set[str]:
+    return {match.group(1) for match in LLM_DRAFT_CITATION_PATTERN.finditer(text)}
+
+
+def _known_source_ids(state: FinSightState) -> set[str]:
+    source_ids: set[str] = set()
+    for source in state.get("sources", []):
+        source_id = source.get("source_id")
+        if source_id is None:
+            continue
+        normalized = str(source_id).strip()
+        if normalized:
+            source_ids.add(normalized)
+    return source_ids
 
 
 def _report_evidence(state: FinSightState) -> dict[str, Any]:

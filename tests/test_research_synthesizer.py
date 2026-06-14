@@ -31,6 +31,7 @@ def sample_risk_themes() -> list[dict]:
             "source_form": "10-K",
             "filing_date": "2024-11-01",
             "accession_number": "0000320193-24-000123",
+            "source_ids": ["latest_10k"],
         }
     ]
 
@@ -51,11 +52,13 @@ def test_synthesize_research_insights_uses_positive_revenue_growth() -> None:
                 "Extracted revenue increased 25.00% year over year in fiscal 2024."
             ),
             "source": "SEC company facts",
+            "source_ids": ["sec_company_facts"],
         },
         {
             "title": "Positive free cash flow",
             "summary": "Extracted free cash flow was 280000000 in fiscal 2024.",
             "source": "SEC company facts",
+            "source_ids": ["sec_company_facts"],
         },
     ]
 
@@ -78,6 +81,7 @@ def test_synthesize_research_insights_uses_risk_themes_for_bear_case() -> None:
                 "pressure operating performance."
             ),
             "source": "10-K filed 2024-11-01, accession 0000320193-24-000123",
+            "source_ids": ["latest_10k"],
         }
     ]
 
