@@ -112,6 +112,34 @@ def test_company_record_rejects_cik_without_digits() -> None:
         CompanyRecord(ticker="BAD", company_name="Bad Data Inc.", cik="not-a-cik")
 
 
+def test_search_returns_ticker_and_company_name_matches(resolver: CompanyResolver) -> None:
+    matches = resolver.search("apple")
+
+    assert [company.ticker for company in matches] == ["AAPL", "APLE"]
+
+
+def test_search_is_case_insensitive(resolver: CompanyResolver) -> None:
+    matches = resolver.search("mIcRoSoFt")
+
+    assert [company.ticker for company in matches] == ["MSFT"]
+
+
+def test_search_returns_exact_ticker_match_first(resolver: CompanyResolver) -> None:
+    matches = resolver.search("AAPL")
+
+    assert [company.ticker for company in matches] == ["AAPL"]
+
+
+def test_search_respects_limit(resolver: CompanyResolver) -> None:
+    matches = resolver.search("Apple", limit=1)
+
+    assert [company.ticker for company in matches] == ["AAPL"]
+
+
+def test_search_empty_query_returns_empty_list(resolver: CompanyResolver) -> None:
+    assert resolver.search("   ") == []
+
+
 def test_load_sec_company_tickers_converts_sec_mapping_fixture() -> None:
     fixture_data = json.loads((FIXTURES_DIR / "sec_company_tickers.json").read_text())
 

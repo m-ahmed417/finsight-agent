@@ -21,6 +21,13 @@ class ResearchRequest(BaseModel):
         return query
 
 
+class CompanySearchResult(BaseModel):
+    ticker: str
+    company_name: str
+    cik: str
+    exchange: str | None = None
+
+
 class ResearchResponse(BaseModel):
     run_id: UUID
     query: str | None = None

@@ -64,6 +64,22 @@ class CompanyResolver:
     def __init__(self, companies: list[CompanyRecord]) -> None:
         self._companies = companies
 
+    def search(self, query: str, limit: int = 10) -> list[CompanyRecord]:
+        normalized_query = self._normalize_query(query)
+        if not normalized_query or limit <= 0:
+            return []
+
+        matches = [
+            company
+            for company in self._companies
+            if self._company_matches_search_query(company, normalized_query)
+        ]
+
+        return sorted(
+            matches,
+            key=lambda company: self._search_sort_key(company, normalized_query),
+        )[:limit]
+
     def resolve(self, query: str) -> CompanyResolution:
         normalized_query = self._normalize_query(query)
         if not normalized_query:
@@ -150,6 +166,31 @@ class CompanyResolver:
             if normalized_query in company.company_name.casefold()
         ]
         return sorted(matches, key=lambda company: (company.ticker, company.company_name))
+
+    @staticmethod
+    def _company_matches_search_query(
+        company: CompanyRecord,
+        normalized_query: str,
+    ) -> bool:
+        return (
+            normalized_query in company.ticker.casefold()
+            or normalized_query in company.company_name.casefold()
+        )
+
+    @staticmethod
+    def _search_sort_key(
+        company: CompanyRecord,
+        normalized_query: str,
+    ) -> tuple[int, str, str]:
+        ticker = company.ticker.casefold()
+        if ticker == normalized_query:
+            rank = 0
+        elif ticker.startswith(normalized_query):
+            rank = 1
+        else:
+            rank = 2
+
+        return (rank, company.ticker, company.company_name)
 
 
 def load_sec_company_tickers(sec_mapping: dict[str, dict]) -> list[CompanyRecord]:

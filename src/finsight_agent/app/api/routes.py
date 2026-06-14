@@ -1,20 +1,23 @@
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from finsight_agent.app.api.dependencies import (
     ResearchGraphRunner,
+    get_company_resolver,
     get_research_repository,
     get_research_graph_runner,
 )
 from finsight_agent.app.api.schemas import (
     AgentStepResponse,
+    CompanySearchResult,
     HealthResponse,
     ResearchRequest,
     ResearchResponse,
 )
 from finsight_agent.app.db.models import AgentStep, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunRepository
+from finsight_agent.app.services.company_resolver import CompanyResolver
 
 router = APIRouter()
 
@@ -22,6 +25,30 @@ router = APIRouter()
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@router.get("/companies/search", response_model=list[CompanySearchResult])
+def search_companies(
+    q: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(10, ge=1, le=50),
+    resolver: CompanyResolver = Depends(get_company_resolver),
+) -> list[CompanySearchResult]:
+    query = q.strip()
+    if not query:
+        raise HTTPException(
+            status_code=422,
+            detail="Company search query cannot be empty.",
+        )
+
+    return [
+        CompanySearchResult(
+            ticker=company.ticker,
+            company_name=company.company_name,
+            cik=company.cik,
+            exchange=company.exchange,
+        )
+        for company in resolver.search(query, limit=limit)
+    ]
 
 
 @router.post("/research", response_model=ResearchResponse)
