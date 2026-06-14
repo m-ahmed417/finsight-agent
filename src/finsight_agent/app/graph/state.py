@@ -19,6 +19,7 @@ class FinSightState(TypedDict, total=False):
     risk_factors: list[dict[str, Any]]
     risk_themes: list[dict[str, Any]]
     financial_metrics: dict[str, Any] | None
+    research_insights: dict[str, Any] | None
     report_draft: str | None
     final_report: str | None
     compliance_status: str | None

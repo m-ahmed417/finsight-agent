@@ -12,6 +12,7 @@ from finsight_agent.app.services.filing_parser import (
     normalize_accession_number,
 )
 from finsight_agent.app.services.metrics import extract_financial_metrics
+from finsight_agent.app.services.research_synthesizer import synthesize_research_insights
 from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 from finsight_agent.app.services.report_generator import generate_research_report
 
@@ -26,6 +27,7 @@ def build_research_graph(resolver: Any, sec_client: Any):
     graph.add_node("fetch_filing_text", _make_fetch_filing_text_node(sec_client))
     graph.add_node("analyze_risks", _analyze_risks)
     graph.add_node("extract_metrics", _extract_metrics)
+    graph.add_node("synthesize_research", _synthesize_research)
     graph.add_node("generate_report", _generate_report)
     graph.add_node("compliance_check", _compliance_check)
 
@@ -50,7 +52,8 @@ def build_research_graph(resolver: Any, sec_client: Any):
     graph.add_edge("identify_filings", "fetch_filing_text")
     graph.add_edge("fetch_filing_text", "analyze_risks")
     graph.add_edge("analyze_risks", "extract_metrics")
-    graph.add_edge("extract_metrics", "generate_report")
+    graph.add_edge("extract_metrics", "synthesize_research")
+    graph.add_edge("synthesize_research", "generate_report")
     graph.add_edge("generate_report", "compliance_check")
     graph.add_edge("compliance_check", END)
 
@@ -73,6 +76,7 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "risk_factors": state.get("risk_factors", []),
         "risk_themes": state.get("risk_themes", []),
         "financial_metrics": state.get("financial_metrics"),
+        "research_insights": state.get("research_insights"),
         "report_draft": state.get("report_draft"),
         "final_report": state.get("final_report"),
         "compliance_status": state.get("compliance_status"),
@@ -380,6 +384,25 @@ def _extract_metrics(state: FinSightState) -> FinSightState:
     }
 
 
+def _synthesize_research(state: FinSightState) -> FinSightState:
+    insights = synthesize_research_insights(
+        company_name=state.get("company_name") or "Unknown Company",
+        ticker=state.get("ticker") or "UNKNOWN",
+        financial_metrics=state.get("financial_metrics"),
+        risk_themes=state.get("risk_themes", []),
+        warnings=state.get("warnings", []),
+    )
+    return {
+        "research_insights": insights,
+        "agent_steps": _append_step(
+            state,
+            "synthesize_research",
+            "completed",
+            "Generated deterministic bull, bear, summary, and open-question points.",
+        ),
+    }
+
+
 def _generate_report(state: FinSightState) -> FinSightState:
     report_draft = generate_research_report(
         company_name=state.get("company_name") or "Unknown Company",
@@ -391,6 +414,7 @@ def _generate_report(state: FinSightState) -> FinSightState:
         sources=state.get("sources", []),
         risk_factors=state.get("risk_factors", []),
         risk_themes=state.get("risk_themes", []),
+        research_insights=state.get("research_insights"),
     )
     return {
         "report_draft": report_draft,

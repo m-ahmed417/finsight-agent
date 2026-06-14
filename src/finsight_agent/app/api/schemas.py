@@ -36,6 +36,10 @@ class ResearchResponse(BaseModel):
     company_name: str | None = None
     report: str | None = None
     financial_metrics: dict[str, Any] | None = None
+    filing_text_excerpt: str | None = None
+    risk_factors: list[dict[str, Any]] = Field(default_factory=list)
+    risk_themes: list[dict[str, Any]] = Field(default_factory=list)
+    research_insights: dict[str, Any] | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)

@@ -18,19 +18,18 @@ def generate_research_report(
     sources: list[dict[str, Any]],
     risk_factors: list[dict[str, Any]] | None = None,
     risk_themes: list[dict[str, Any]] | None = None,
+    research_insights: dict[str, Any] | None = None,
 ) -> str:
     metrics = financial_metrics or {"periods": []}
     extracted_risk_factors = risk_factors or []
     analyzed_risk_themes = risk_themes or []
+    insights = research_insights or {}
     return "\n\n".join(
         [
             f"# FinSight Research Brief: {company_name} ({ticker})",
             f"## 1. Research-Only Notice\n\n{RESEARCH_ONLY_NOTICE}",
             "## 2. Executive Summary\n\n"
-            f"{company_name} ({ticker}) was analyzed using available SEC filing "
-            "metadata and structured company facts. This draft is generated from "
-            "deterministic data extraction and should be reviewed alongside the "
-            "source filings.",
+            + _executive_summary_section(insights, company_name, ticker),
             "## 3. Company Overview\n\n"
             "A detailed business overview has not been generated yet. This section "
             "will later be grounded in filing text and company descriptions.",
@@ -38,16 +37,10 @@ def generate_research_report(
             "## 5. Key Financial Metrics\n\n" + _metrics_table(metrics),
             "## 6. Risk Factors\n\n"
             + _risk_factors_section(extracted_risk_factors, analyzed_risk_themes),
-            "## 7. Bull Case\n\n"
-            "The bull case section is pending LLM-assisted synthesis from grounded "
-            "financial metrics and filing evidence.",
-            "## 8. Bear Case\n\n"
-            "The bear case section is pending LLM-assisted synthesis from grounded "
-            "financial metrics and filing evidence.",
+            "## 7. Bull Case\n\n" + _research_points_section(insights.get("bull_case", [])),
+            "## 8. Bear Case\n\n" + _research_points_section(insights.get("bear_case", [])),
             "## 9. Open Questions for Further Research\n\n"
-            "- What changed in the latest annual filing compared with prior years?\n"
-            "- Are revenue growth, margins, and free cash flow durable?\n"
-            "- Which risks require deeper analyst review?",
+            + _open_questions_section(insights.get("open_questions", [])),
             "## 10. Sources Used\n\n" + _sources_section(latest_10k, latest_10q, sources),
             "## 11. Limitations\n\n" + _limitations_section(warnings),
         ]
@@ -121,6 +114,52 @@ def _sources_section(
     if not source_lines:
         return "No sources were recorded."
     return "\n".join(source_lines)
+
+
+def _executive_summary_section(
+    research_insights: dict[str, Any],
+    company_name: str,
+    ticker: str,
+) -> str:
+    summary_points = research_insights.get("executive_summary", [])
+    if summary_points:
+        return "\n".join(f"- {point}" for point in summary_points)
+
+    return (
+        f"{company_name} ({ticker}) was analyzed using available SEC filing "
+        "metadata and structured company facts. This draft is generated from "
+        "deterministic data extraction and should be reviewed alongside the "
+        "source filings."
+    )
+
+
+def _research_points_section(points: list[dict[str, Any]]) -> str:
+    if not points:
+        return (
+            "This section is pending deterministic synthesis from grounded "
+            "financial metrics and filing evidence."
+        )
+
+    return "\n".join(_format_research_point(point) for point in points)
+
+
+def _format_research_point(point: dict[str, Any]) -> str:
+    title = point.get("title", "Research point")
+    summary = point.get("summary", "No summary available.")
+    source = point.get("source")
+    if source:
+        return f"- **{title}**: {summary} (Source: {source})"
+    return f"- **{title}**: {summary}"
+
+
+def _open_questions_section(questions: list[str]) -> str:
+    if not questions:
+        return (
+            "- What changed in the latest annual filing compared with prior years?\n"
+            "- Are revenue growth, margins, and free cash flow durable?\n"
+            "- Which risks require deeper analyst review?"
+        )
+    return "\n".join(f"- {question}" for question in questions)
 
 
 def _risk_factors_section(

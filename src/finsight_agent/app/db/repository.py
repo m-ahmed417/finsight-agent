@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
 
+FILING_TEXT_EXCERPT_LENGTH = 2000
+
 
 class ResearchRunRepository:
     def __init__(self, session: Session) -> None:
@@ -26,6 +28,10 @@ class ResearchRunRepository:
             company_name=graph_result.get("company_name"),
             final_report=graph_result.get("final_report"),
             financial_metrics_json=graph_result.get("financial_metrics"),
+            filing_text_excerpt=_filing_text_excerpt(graph_result.get("filing_text")),
+            risk_factors_json=graph_result.get("risk_factors", []),
+            risk_themes_json=graph_result.get("risk_themes", []),
+            research_insights_json=graph_result.get("research_insights"),
             warnings_json=graph_result.get("warnings", []),
             errors_json=graph_result.get("errors", []),
             sources_json=graph_result.get("sources", []),
@@ -57,3 +63,9 @@ class ResearchRunRepository:
             .order_by(AgentStep.id)
         )
         return list(self._session.scalars(statement))
+
+
+def _filing_text_excerpt(filing_text: str | None) -> str | None:
+    if not filing_text:
+        return None
+    return filing_text[:FILING_TEXT_EXCERPT_LENGTH]

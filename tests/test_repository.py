@@ -27,6 +27,31 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
+            "filing_text": "Risk factor text " * 300,
+            "risk_factors": [
+                {
+                    "form": "10-K",
+                    "filing_date": "2024-11-01",
+                    "accession_number": "0000320193-24-000123",
+                    "text": "Competition risk text.",
+                }
+            ],
+            "risk_themes": [
+                {
+                    "title": "Competitive pressure",
+                    "summary": "Competition could pressure operating performance.",
+                }
+            ],
+            "research_insights": {
+                "bull_case": [
+                    {
+                        "title": "Revenue growth",
+                        "summary": "Extracted revenue increased year over year.",
+                    }
+                ],
+                "bear_case": [],
+                "open_questions": [],
+            },
             "warnings": [],
             "errors": [],
             "sources": [],
@@ -57,6 +82,23 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert retrieved.financial_metrics_json == {
         "periods": [{"fy": 2024, "revenue": 1250000000}]
     }
+    assert retrieved.filing_text_excerpt.startswith("Risk factor text")
+    assert len(retrieved.filing_text_excerpt) == 2000
+    assert retrieved.risk_factors_json == [
+        {
+            "form": "10-K",
+            "filing_date": "2024-11-01",
+            "accession_number": "0000320193-24-000123",
+            "text": "Competition risk text.",
+        }
+    ]
+    assert retrieved.risk_themes_json == [
+        {
+            "title": "Competitive pressure",
+            "summary": "Competition could pressure operating performance.",
+        }
+    ]
+    assert retrieved.research_insights_json["bull_case"][0]["title"] == "Revenue growth"
     assert retrieved.warnings_json == []
     assert retrieved.errors_json == []
     assert retrieved.sources_json == []

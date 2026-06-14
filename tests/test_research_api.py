@@ -51,6 +51,14 @@ class FakeResearchRepository:
             company_name=graph_result.get("company_name"),
             final_report=graph_result.get("final_report"),
             financial_metrics_json=graph_result.get("financial_metrics"),
+            filing_text_excerpt=(
+                graph_result.get("filing_text", "")[:2000]
+                if graph_result.get("filing_text")
+                else None
+            ),
+            risk_factors_json=graph_result.get("risk_factors", []),
+            risk_themes_json=graph_result.get("risk_themes", []),
+            research_insights_json=graph_result.get("research_insights"),
             warnings_json=graph_result.get("warnings", []),
             errors_json=graph_result.get("errors", []),
             sources_json=graph_result.get("sources", []),
@@ -95,6 +103,14 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
             "company_name": "Apple Inc.",
             "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
+            "filing_text": "Risk factor text from latest 10-K.",
+            "risk_factors": [{"form": "10-K", "text": "Risk factor text."}],
+            "risk_themes": [{"title": "Competitive pressure"}],
+            "research_insights": {
+                "bull_case": [{"title": "Revenue growth"}],
+                "bear_case": [{"title": "Competitive pressure"}],
+                "open_questions": [],
+            },
             "warnings": [],
             "errors": [],
             "sources": [],
@@ -119,6 +135,10 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
     assert body["ticker"] == "AAPL"
     assert body["company_name"] == "Apple Inc."
     assert body["financial_metrics"]["periods"][0]["revenue"] == 1250000000
+    assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
+    assert body["risk_factors"] == [{"form": "10-K", "text": "Risk factor text."}]
+    assert body["risk_themes"] == [{"title": "Competitive pressure"}]
+    assert body["research_insights"]["bull_case"] == [{"title": "Revenue growth"}]
     assert body["report"] == "# FinSight Research Brief: Apple Inc. (AAPL)"
     assert body["warnings"] == []
     assert body["errors"] == []
@@ -190,6 +210,14 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
             "company_name": "Apple Inc.",
             "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
+            "filing_text": "Risk factor text from latest 10-K.",
+            "risk_factors": [{"form": "10-K", "text": "Risk factor text."}],
+            "risk_themes": [{"title": "Competitive pressure"}],
+            "research_insights": {
+                "bull_case": [{"title": "Revenue growth"}],
+                "bear_case": [{"title": "Competitive pressure"}],
+                "open_questions": [],
+            },
             "warnings": [],
             "errors": [],
             "sources": [],
@@ -216,6 +244,9 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
     assert body["query"] == "AAPL"
     assert body["status"] == "completed"
     assert body["ticker"] == "AAPL"
+    assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
+    assert body["risk_themes"] == [{"title": "Competitive pressure"}]
+    assert body["research_insights"]["bear_case"] == [{"title": "Competitive pressure"}]
 
 
 def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:

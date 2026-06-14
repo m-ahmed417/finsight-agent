@@ -164,3 +164,56 @@ def test_generate_research_report_includes_risk_themes() -> None:
         "business risk that could pressure operating performance. "
         "(10-K filed 2024-11-01, accession abc)"
     ) in report
+
+
+def test_generate_research_report_includes_synthesized_research_sections() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+        research_insights={
+            "executive_summary": [
+                "Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
+            ],
+            "bull_case": [
+                {
+                    "title": "Revenue growth",
+                    "summary": (
+                        "Extracted revenue increased 25.00% year over year in fiscal 2024."
+                    ),
+                    "source": "SEC company facts",
+                }
+            ],
+            "bear_case": [
+                {
+                    "title": "Competitive pressure",
+                    "summary": (
+                        "The bear case includes this source-grounded risk theme: "
+                        "competition could pressure operating performance."
+                    ),
+                    "source": "10-K filed 2024-11-01, accession abc",
+                }
+            ],
+            "open_questions": [
+                "What changed in the latest annual filing compared with prior years?"
+            ],
+        },
+    )
+
+    assert (
+        "- Apple Inc. (AAPL) was reviewed using available SEC-derived evidence."
+    ) in report
+    assert (
+        "- **Revenue growth**: Extracted revenue increased 25.00% year over year "
+        "in fiscal 2024. (Source: SEC company facts)"
+    ) in report
+    assert (
+        "- **Competitive pressure**: The bear case includes this source-grounded "
+        "risk theme: competition could pressure operating performance. "
+        "(Source: 10-K filed 2024-11-01, accession abc)"
+    ) in report
+    assert "- What changed in the latest annual filing compared with prior years?" in report

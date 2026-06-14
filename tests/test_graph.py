@@ -138,6 +138,21 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
             ),
         },
     ]
+    assert result["research_insights"]["bull_case"] == [
+        {
+            "title": "Revenue growth",
+            "summary": (
+                "Extracted revenue increased 25.00% year over year in fiscal 2024."
+            ),
+            "source": "SEC company facts",
+        },
+        {
+            "title": "Positive free cash flow",
+            "summary": "Extracted free cash flow was 280000000 in fiscal 2024.",
+            "source": "SEC company facts",
+        },
+    ]
+    assert result["research_insights"]["bear_case"][0]["title"] == "Competitive pressure"
     assert result["sources"]
     submissions_source = source_by_type(result["sources"], "sec_submissions")
     company_facts_source = source_by_type(result["sources"], "sec_company_facts")
@@ -184,6 +199,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "fetch_filing_text",
         "analyze_risks",
         "extract_metrics",
+        "synthesize_research",
         "generate_report",
         "compliance_check",
     ]
@@ -302,6 +318,7 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
     assert result["risk_factors"] == []
     assert result["risk_themes"] == []
     assert result["financial_metrics"]["periods"][1]["revenue"] == 1250000000
+    assert result["research_insights"]["bear_case"] == []
     assert result["final_report"] is not None
     assert {
         "code": "filing_text_unavailable",
