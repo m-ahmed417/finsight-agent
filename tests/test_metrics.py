@@ -23,6 +23,28 @@ def test_extracts_revenue_and_net_income_from_company_facts() -> None:
     assert periods[1]["net_income"] == 250000000
 
 
+def test_tracks_metric_source_provenance() -> None:
+    metrics = extract_financial_metrics(load_sample_company_facts())
+
+    latest_period = metrics["periods"][1]
+
+    assert latest_period["metric_sources"]["revenue"] == {
+        "metric": "revenue",
+        "fy": 2024,
+        "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "unit": "USD",
+        "form": "10-K",
+        "filed": "2024-11-01",
+        "period": None,
+        "accession_number": None,
+    }
+    assert latest_period["metric_sources"]["free_cash_flow"] == {
+        "metric": "free_cash_flow",
+        "fy": 2024,
+        "components": ["operating_cash_flow", "capital_expenditure"],
+    }
+
+
 def test_calculates_revenue_growth_and_net_margin() -> None:
     metrics = extract_financial_metrics(load_sample_company_facts())
     latest_period = metrics["periods"][1]

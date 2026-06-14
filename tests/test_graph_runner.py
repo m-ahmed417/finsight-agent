@@ -3,8 +3,8 @@ from pathlib import Path
 
 from finsight_agent.app.graph.runner import (
     build_research_graph_runner,
-    build_static_company_resolver,
 )
+from finsight_agent.app.services.company_resolver import CompanyRecord, CompanyResolver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -17,26 +17,16 @@ class FakeSECClient:
         return json.loads((FIXTURES_DIR / "sample_company_facts.json").read_text())
 
 
-def test_static_company_resolver_supports_mvp_tickers() -> None:
-    resolver = build_static_company_resolver()
-
-    apple = resolver.resolve("AAPL")
-    microsoft = resolver.resolve("MSFT")
-    tesla = resolver.resolve("TSLA")
-    nvidia = resolver.resolve("NVDA")
-
-    assert apple.company is not None
-    assert apple.company.cik == "0000320193"
-    assert microsoft.company is not None
-    assert microsoft.company.cik == "0000789019"
-    assert tesla.company is not None
-    assert tesla.company.cik == "0001318605"
-    assert nvidia.company is not None
-    assert nvidia.company.cik == "0001045810"
-
-
-def test_build_research_graph_runner_wires_static_resolver_and_sec_client() -> None:
-    graph_runner = build_research_graph_runner(sec_client=FakeSECClient())
+def test_build_research_graph_runner_wires_resolver_and_sec_client() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    graph_runner = build_research_graph_runner(
+        resolver=resolver,
+        sec_client=FakeSECClient(),
+    )
 
     result = graph_runner.invoke({"user_query": "AAPL"})
 

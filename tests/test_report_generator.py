@@ -89,3 +89,78 @@ def test_generate_research_report_includes_limitations_from_warnings() -> None:
     )
 
     assert "- Revenue could not be extracted." in report
+
+
+def test_generate_research_report_includes_source_labels_and_urls() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[
+            {
+                "label": "SEC company facts",
+                "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+            }
+        ],
+    )
+
+    assert (
+        "- SEC company facts: "
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ) in report
+
+
+def test_generate_research_report_notes_available_risk_factor_text() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k={"filing_date": "2024-11-01", "accession_number": "abc"},
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+        risk_factors=[
+            {
+                "form": "10-K",
+                "filing_date": "2024-11-01",
+                "accession_number": "abc",
+                "text": "Raw filing risk text should not be copied into the report.",
+            }
+        ],
+    )
+
+    assert "Risk-factor text was retrieved from the latest 10-K filed 2024-11-01." in report
+    assert "Raw filing risk text should not be copied into the report." not in report
+
+
+def test_generate_research_report_includes_risk_themes() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k={"filing_date": "2024-11-01", "accession_number": "abc"},
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+        risk_themes=[
+            {
+                "title": "Competitive pressure",
+                "summary": (
+                    "The filing describes competition as a material business risk that "
+                    "could pressure operating performance."
+                ),
+                "source_form": "10-K",
+                "filing_date": "2024-11-01",
+                "accession_number": "abc",
+            }
+        ],
+    )
+
+    assert (
+        "- **Competitive pressure**: The filing describes competition as a material "
+        "business risk that could pressure operating performance. "
+        "(10-K filed 2024-11-01, accession abc)"
+    ) in report

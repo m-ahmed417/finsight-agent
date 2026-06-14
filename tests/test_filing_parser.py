@@ -4,6 +4,7 @@ from pathlib import Path
 
 from finsight_agent.app.services.filing_parser import (
     FilingRecord,
+    extract_risk_factors_section,
     find_latest_filing,
     get_recent_filings,
     normalize_accession_number,
@@ -14,6 +15,10 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 def load_sample_submissions() -> dict:
     return json.loads((FIXTURES_DIR / "sample_submissions.json").read_text())
+
+
+def load_text_fixture(name: str) -> str:
+    return (FIXTURES_DIR / name).read_text()
 
 
 def test_get_recent_filings_converts_sec_parallel_arrays_to_records() -> None:
@@ -105,3 +110,18 @@ def test_get_recent_filings_skips_malformed_rows() -> None:
 
 def test_normalize_accession_number_removes_dashes_for_sec_document_paths() -> None:
     assert normalize_accession_number("0000320193-24-000123") == "000032019324000123"
+
+
+def test_extract_risk_factors_section_returns_item_1a_text() -> None:
+    section = extract_risk_factors_section(load_text_fixture("sample_10k_excerpt.txt"))
+
+    assert section is not None
+    assert section.item == "1A"
+    assert "The Company faces intense competition" in section.text
+    assert "Item 1B. Unresolved Staff Comments" not in section.text
+
+
+def test_extract_risk_factors_section_returns_none_when_missing() -> None:
+    section = extract_risk_factors_section("Item 1. Business\n\nNo risk section here.")
+
+    assert section is None

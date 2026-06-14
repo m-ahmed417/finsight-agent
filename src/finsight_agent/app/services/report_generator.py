@@ -16,8 +16,12 @@ def generate_research_report(
     latest_10q: dict[str, Any] | None,
     warnings: list[dict[str, Any]],
     sources: list[dict[str, Any]],
+    risk_factors: list[dict[str, Any]] | None = None,
+    risk_themes: list[dict[str, Any]] | None = None,
 ) -> str:
     metrics = financial_metrics or {"periods": []}
+    extracted_risk_factors = risk_factors or []
+    analyzed_risk_themes = risk_themes or []
     return "\n\n".join(
         [
             f"# FinSight Research Brief: {company_name} ({ticker})",
@@ -33,8 +37,7 @@ def generate_research_report(
             "## 4. Financial Performance\n\n" + _financial_performance_summary(metrics),
             "## 5. Key Financial Metrics\n\n" + _metrics_table(metrics),
             "## 6. Risk Factors\n\n"
-            "Risk factor analysis has not been performed yet. Future versions will "
-            "summarize risks from the latest available 10-K filing.",
+            + _risk_factors_section(extracted_risk_factors, analyzed_risk_themes),
             "## 7. Bull Case\n\n"
             "The bull case section is pending LLM-assisted synthesis from grounded "
             "financial metrics and filing evidence.",
@@ -112,12 +115,47 @@ def _sources_section(
             f"accession {latest_10q.get('accession_number')}."
         )
     source_lines.extend(
-        f"- {source.get('label', source.get('url', 'Source'))}" for source in sources
+        _format_source_line(source) for source in sources
     )
 
     if not source_lines:
         return "No sources were recorded."
     return "\n".join(source_lines)
+
+
+def _risk_factors_section(
+    risk_factors: list[dict[str, Any]],
+    risk_themes: list[dict[str, Any]],
+) -> str:
+    if risk_themes:
+        return "\n".join(_format_risk_theme(theme) for theme in risk_themes)
+
+    if not risk_factors:
+        return (
+            "Risk factor analysis has not been performed yet. Future versions will "
+            "summarize risks from the latest available 10-K filing."
+        )
+
+    latest = risk_factors[0]
+    form = latest.get("form", "filing")
+    filing_date = latest.get("filing_date", "an unknown date")
+    return (
+        f"Risk-factor text was retrieved from the latest {form} filed {filing_date}. "
+        "A future LLM-assisted step will summarize this extracted text into "
+        "source-grounded risk themes."
+    )
+
+
+def _format_risk_theme(theme: dict[str, Any]) -> str:
+    title = theme.get("title", "Risk theme")
+    summary = theme.get("summary", "No summary available.")
+    source_form = theme.get("source_form", "filing")
+    filing_date = theme.get("filing_date", "unknown date")
+    accession_number = theme.get("accession_number", "unknown accession")
+    return (
+        f"- **{title}**: {summary} "
+        f"({source_form} filed {filing_date}, accession {accession_number})"
+    )
 
 
 def _limitations_section(warnings: list[dict[str, Any]]) -> str:
@@ -137,3 +175,11 @@ def _format_percentage(value: Any) -> str:
     if value is None:
         return "N/A"
     return f"{value:.2%}"
+
+
+def _format_source_line(source: dict[str, Any]) -> str:
+    label = source.get("label") or source.get("source_type") or "Source"
+    url = source.get("url")
+    if url:
+        return f"- {label}: {url}"
+    return f"- {label}"

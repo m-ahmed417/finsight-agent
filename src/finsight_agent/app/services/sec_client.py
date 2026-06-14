@@ -11,6 +11,10 @@ class SECClient:
     COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
     SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik}.json"
     COMPANY_FACTS_URL_TEMPLATE = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+    FILING_DOCUMENT_URL_TEMPLATE = (
+        "https://www.sec.gov/Archives/edgar/data/"
+        "{cik_path}/{accession_path}/{primary_document}"
+    )
 
     def __init__(self, user_agent: str, timeout: float = 10.0) -> None:
         normalized_user_agent = user_agent.strip()
@@ -37,11 +41,32 @@ class SECClient:
         response = self._get(url)
         return self._parse_json(response, source="company facts")
 
-    def _get(self, url: str) -> httpx.Response:
+    def fetch_filing_document(
+        self,
+        *,
+        cik: str,
+        accession_number: str,
+        primary_document: str,
+    ) -> str:
+        normalized_cik = self._normalize_cik(cik)
+        normalized_primary_document = primary_document.strip()
+        if not normalized_primary_document:
+            msg = "Primary document cannot be empty."
+            raise ValueError(msg)
+
+        url = self.FILING_DOCUMENT_URL_TEMPLATE.format(
+            cik_path=str(int(normalized_cik)),
+            accession_path=self._normalize_accession_number(accession_number),
+            primary_document=normalized_primary_document,
+        )
+        response = self._get(url, headers=self._document_headers)
+        return response.text
+
+    def _get(self, url: str, headers: dict[str, str] | None = None) -> httpx.Response:
         try:
             response = httpx.get(
                 url,
-                headers=self._headers,
+                headers=headers or self._json_headers,
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:
@@ -68,9 +93,16 @@ class SECClient:
         return data
 
     @property
-    def _headers(self) -> dict[str, str]:
+    def _json_headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json",
+            "User-Agent": self._user_agent,
+        }
+
+    @property
+    def _document_headers(self) -> dict[str, str]:
+        return {
+            "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
             "User-Agent": self._user_agent,
         }
 
@@ -81,3 +113,11 @@ class SECClient:
             msg = "CIK must contain at least one digit."
             raise ValueError(msg)
         return digits.zfill(10)
+
+    @staticmethod
+    def _normalize_accession_number(accession_number: str) -> str:
+        digits = "".join(char for char in str(accession_number).strip() if char.isdigit())
+        if not digits:
+            msg = "Accession number must contain at least one digit."
+            raise ValueError(msg)
+        return digits

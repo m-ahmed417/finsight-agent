@@ -128,6 +128,35 @@ def test_fetch_company_facts_rejects_invalid_cik() -> None:
 
 
 @respx.mock
+def test_fetch_filing_document_builds_archive_url_and_returns_text() -> None:
+    route = respx.get(
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019324000123/aapl-20240928.htm"
+    ).mock(return_value=httpx.Response(200, text="<html>10-K text</html>"))
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    result = client.fetch_filing_document(
+        cik="0000320193",
+        accession_number="0000320193-24-000123",
+        primary_document="aapl-20240928.htm",
+    )
+
+    assert route.called
+    assert result == "<html>10-K text</html>"
+
+
+def test_fetch_filing_document_rejects_missing_primary_document() -> None:
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    with pytest.raises(ValueError, match="Primary document cannot be empty"):
+        client.fetch_filing_document(
+            cik="0000320193",
+            accession_number="0000320193-24-000123",
+            primary_document=" ",
+        )
+
+
+@respx.mock
 def test_fetch_company_submissions_raises_clear_error_on_http_failure() -> None:
     respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
         return_value=httpx.Response(500, text="SEC unavailable")

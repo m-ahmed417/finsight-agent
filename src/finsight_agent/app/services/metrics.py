@@ -98,6 +98,21 @@ def extract_financial_metrics(company_facts: dict[str, Any]) -> dict[str, Any]:
                     operating_cash_flow,
                     capital_expenditure,
                 ),
+                "metric_sources": _build_metric_sources(
+                    fiscal_year=fiscal_year,
+                    revenue_fact=revenue_by_fy[fiscal_year],
+                    net_income_fact=net_income_fact,
+                    operating_income_fact=operating_income_fact,
+                    assets_fact=assets_by_fy.get(fiscal_year),
+                    liabilities_fact=liabilities_by_fy.get(fiscal_year),
+                    cash_fact=cash_by_fy.get(fiscal_year),
+                    debt_fact=debt_by_fy.get(fiscal_year),
+                    operating_cash_flow_fact=operating_cash_flow_by_fy.get(fiscal_year),
+                    capital_expenditure_fact=capital_expenditure_by_fy.get(fiscal_year),
+                    free_cash_flow_available=(
+                        operating_cash_flow is not None and capital_expenditure is not None
+                    ),
+                ),
             }
         )
         previous_revenue = revenue
@@ -118,11 +133,12 @@ def _extract_metric_by_fiscal_year(
         if not isinstance(tag_data, dict):
             continue
 
-        usd_facts = tag_data.get("units", {}).get("USD", [])
+        unit = "USD"
+        usd_facts = tag_data.get("units", {}).get(unit, [])
         if not isinstance(usd_facts, list):
             continue
 
-        selected = _select_annual_facts_by_fiscal_year(usd_facts)
+        selected = _select_annual_facts_by_fiscal_year(usd_facts, tag=tag, unit=unit)
         if selected:
             return selected
 
@@ -148,12 +164,24 @@ def _extract_debt_by_fiscal_year(company_facts: dict[str, Any]) -> dict[int, dic
             if fiscal_year in facts
         ]
         if component_values:
-            combined[fiscal_year] = {"val": sum(component_values)}
+            combined[fiscal_year] = {
+                "val": sum(component_values),
+                "component_sources": [
+                    _metric_source("debt_component", facts[fiscal_year])
+                    for facts in component_facts
+                    if fiscal_year in facts
+                ],
+            }
 
     return combined
 
 
-def _select_annual_facts_by_fiscal_year(facts: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+def _select_annual_facts_by_fiscal_year(
+    facts: list[dict[str, Any]],
+    *,
+    tag: str,
+    unit: str,
+) -> dict[int, dict[str, Any]]:
     candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for fact in facts:
         fiscal_year = fact.get("fy")
@@ -166,7 +194,11 @@ def _select_annual_facts_by_fiscal_year(facts: list[dict[str, Any]]) -> dict[int
         candidates[fiscal_year].append(fact)
 
     return {
-        fiscal_year: _choose_best_fact(fiscal_year_facts)
+        fiscal_year: _with_fact_provenance(
+            _choose_best_fact(fiscal_year_facts),
+            tag=tag,
+            unit=unit,
+        )
         for fiscal_year, fiscal_year_facts in candidates.items()
     }
 
@@ -230,3 +262,65 @@ def _get_fact_value(
     if fact is None:
         return None
     return fact["val"]
+
+
+def _with_fact_provenance(fact: dict[str, Any], *, tag: str, unit: str) -> dict[str, Any]:
+    return {
+        **fact,
+        "_tag": tag,
+        "_unit": unit,
+    }
+
+
+def _build_metric_sources(
+    *,
+    fiscal_year: int,
+    revenue_fact: dict[str, Any],
+    net_income_fact: dict[str, Any] | None,
+    operating_income_fact: dict[str, Any] | None,
+    assets_fact: dict[str, Any] | None,
+    liabilities_fact: dict[str, Any] | None,
+    cash_fact: dict[str, Any] | None,
+    debt_fact: dict[str, Any] | None,
+    operating_cash_flow_fact: dict[str, Any] | None,
+    capital_expenditure_fact: dict[str, Any] | None,
+    free_cash_flow_available: bool,
+) -> dict[str, Any]:
+    sources = {
+        "revenue": _metric_source("revenue", revenue_fact),
+    }
+    optional_facts = {
+        "net_income": net_income_fact,
+        "operating_income": operating_income_fact,
+        "assets": assets_fact,
+        "liabilities": liabilities_fact,
+        "cash": cash_fact,
+        "debt": debt_fact,
+        "operating_cash_flow": operating_cash_flow_fact,
+        "capital_expenditure": capital_expenditure_fact,
+    }
+    for metric, fact in optional_facts.items():
+        if fact is not None:
+            sources[metric] = _metric_source(metric, fact)
+
+    if free_cash_flow_available:
+        sources["free_cash_flow"] = {
+            "metric": "free_cash_flow",
+            "fy": fiscal_year,
+            "components": ["operating_cash_flow", "capital_expenditure"],
+        }
+
+    return sources
+
+
+def _metric_source(metric: str, fact: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "metric": metric,
+        "fy": fact.get("fy"),
+        "tag": fact.get("_tag"),
+        "unit": fact.get("_unit"),
+        "form": fact.get("form"),
+        "filed": fact.get("filed"),
+        "period": fact.get("end"),
+        "accession_number": fact.get("accn"),
+    }

@@ -1,12 +1,18 @@
 from typing import Any
+from datetime import datetime, timezone
 
 from langgraph.graph import END, StateGraph
 
 from finsight_agent.app.graph.state import FinSightState
 from finsight_agent.app.services.company_resolver import ResolutionStatus
 from finsight_agent.app.services.compliance import check_report_compliance
-from finsight_agent.app.services.filing_parser import find_latest_filing
+from finsight_agent.app.services.filing_parser import (
+    extract_risk_factors_section,
+    find_latest_filing,
+    normalize_accession_number,
+)
 from finsight_agent.app.services.metrics import extract_financial_metrics
+from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 from finsight_agent.app.services.report_generator import generate_research_report
 
 
@@ -17,6 +23,8 @@ def build_research_graph(resolver: Any, sec_client: Any):
     graph.add_node("resolve_company", _make_resolve_company_node(resolver))
     graph.add_node("fetch_sec_data", _make_fetch_sec_data_node(sec_client))
     graph.add_node("identify_filings", _identify_filings)
+    graph.add_node("fetch_filing_text", _make_fetch_filing_text_node(sec_client))
+    graph.add_node("analyze_risks", _analyze_risks)
     graph.add_node("extract_metrics", _extract_metrics)
     graph.add_node("generate_report", _generate_report)
     graph.add_node("compliance_check", _compliance_check)
@@ -39,7 +47,9 @@ def build_research_graph(resolver: Any, sec_client: Any):
             "stop": END,
         },
     )
-    graph.add_edge("identify_filings", "extract_metrics")
+    graph.add_edge("identify_filings", "fetch_filing_text")
+    graph.add_edge("fetch_filing_text", "analyze_risks")
+    graph.add_edge("analyze_risks", "extract_metrics")
     graph.add_edge("extract_metrics", "generate_report")
     graph.add_edge("generate_report", "compliance_check")
     graph.add_edge("compliance_check", END)
@@ -59,6 +69,9 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "company_facts": state.get("company_facts"),
         "latest_10k": state.get("latest_10k"),
         "latest_10q": state.get("latest_10q"),
+        "filing_text": state.get("filing_text"),
+        "risk_factors": state.get("risk_factors", []),
+        "risk_themes": state.get("risk_themes", []),
         "financial_metrics": state.get("financial_metrics"),
         "report_draft": state.get("report_draft"),
         "final_report": state.get("final_report"),
@@ -178,9 +191,28 @@ def _make_fetch_sec_data_node(sec_client: Any):
                 ]
             }
 
+        normalized_cik = _normalize_cik(cik)
+        retrieved_at = _utc_timestamp()
         return {
             "sec_submissions": sec_submissions,
             "company_facts": company_facts,
+            "sources": [
+                *state.get("sources", []),
+                {
+                    "source_type": "sec_submissions",
+                    "label": "SEC submissions",
+                    "cik": normalized_cik,
+                    "url": _sec_submissions_url(normalized_cik),
+                    "retrieved_at": retrieved_at,
+                },
+                {
+                    "source_type": "sec_company_facts",
+                    "label": "SEC company facts",
+                    "cik": normalized_cik,
+                    "url": _sec_company_facts_url(normalized_cik),
+                    "retrieved_at": retrieved_at,
+                },
+            ],
             "agent_steps": _append_step(
                 state,
                 "fetch_sec_data",
@@ -196,15 +228,129 @@ def _identify_filings(state: FinSightState) -> FinSightState:
     submissions = state.get("sec_submissions") or {}
     latest_10k = find_latest_filing(submissions, form_type="10-K")
     latest_10q = find_latest_filing(submissions, form_type="10-Q")
+    latest_10k_data = latest_10k.model_dump(mode="json") if latest_10k else None
+    latest_10q_data = latest_10q.model_dump(mode="json") if latest_10q else None
 
     return {
-        "latest_10k": latest_10k.model_dump(mode="json") if latest_10k else None,
-        "latest_10q": latest_10q.model_dump(mode="json") if latest_10q else None,
+        "latest_10k": latest_10k_data,
+        "latest_10q": latest_10q_data,
+        "sources": [
+            *state.get("sources", []),
+            *[
+                source
+                for source in (
+                    _filing_source(state.get("cik"), latest_10k_data, "Latest 10-K filing"),
+                    _filing_source(state.get("cik"), latest_10q_data, "Latest 10-Q filing"),
+                )
+                if source is not None
+            ],
+        ],
         "agent_steps": _append_step(
             state,
             "identify_filings",
             "completed",
             "Identified latest 10-K and 10-Q filing metadata.",
+        ),
+    }
+
+
+def _make_fetch_filing_text_node(sec_client: Any):
+    def fetch_filing_text(state: FinSightState) -> FinSightState:
+        latest_10k = state.get("latest_10k")
+        cik = state.get("cik")
+        if not latest_10k or not cik:
+            return _filing_text_unavailable_update(
+                state,
+                "No latest 10-K filing was available for risk-factor extraction.",
+            )
+
+        accession_number = latest_10k.get("accession_number")
+        primary_document = latest_10k.get("primary_document")
+        if not accession_number or not primary_document:
+            return _filing_text_unavailable_update(
+                state,
+                "Latest 10-K filing did not include a primary document.",
+            )
+
+        try:
+            filing_text = sec_client.fetch_filing_document(
+                cik=cik,
+                accession_number=accession_number,
+                primary_document=primary_document,
+            )
+        except Exception as exc:
+            return _filing_text_unavailable_update(state, str(exc))
+
+        section = extract_risk_factors_section(filing_text)
+        if section is None:
+            return {
+                "filing_text": filing_text,
+                "risk_factors": [],
+                "warnings": [
+                    *state.get("warnings", []),
+                    {
+                        "code": "risk_factors_unavailable",
+                        "message": "Item 1A risk-factor section could not be extracted.",
+                        "severity": "warning",
+                    },
+                ],
+                "agent_steps": _append_step(
+                    state,
+                    "fetch_filing_text",
+                    "completed",
+                    "Retrieved latest 10-K but could not extract risk-factor text.",
+                ),
+            }
+
+        source_url = _filing_document_url(
+            cik=_normalize_cik(cik),
+            accession_number=accession_number,
+            primary_document=primary_document,
+        )
+        return {
+            "filing_text": filing_text,
+            "risk_factors": [
+                {
+                    "source_type": "sec_risk_factors",
+                    "form": latest_10k.get("form"),
+                    "filing_date": latest_10k.get("filing_date"),
+                    "accession_number": accession_number,
+                    "source_url": source_url,
+                    "text": section.text,
+                }
+            ],
+            "agent_steps": _append_step(
+                state,
+                "fetch_filing_text",
+                "completed",
+                "Retrieved latest 10-K risk-factor text.",
+            ),
+        }
+
+    return fetch_filing_text
+
+
+def _analyze_risks(state: FinSightState) -> FinSightState:
+    analysis = analyze_risk_factors(state.get("risk_factors", []))
+    warnings = [
+        *state.get("warnings", []),
+        *analysis.get("warnings", []),
+    ]
+    themes = analysis.get("themes", [])
+    message = (
+        "Generated deterministic risk themes from extracted 10-K text."
+        if themes
+        else "Risk-factor text was unavailable for analysis."
+    )
+
+    return {
+        "risk_themes": themes,
+        "warnings": warnings,
+        "agent_steps": _append_step(
+            state,
+            "analyze_risks",
+            "completed",
+            message,
         ),
     }
 
@@ -243,6 +389,8 @@ def _generate_report(state: FinSightState) -> FinSightState:
         latest_10q=state.get("latest_10q"),
         warnings=state.get("warnings", []),
         sources=state.get("sources", []),
+        risk_factors=state.get("risk_factors", []),
+        risk_themes=state.get("risk_themes", []),
     )
     return {
         "report_draft": report_draft,
@@ -333,3 +481,87 @@ def _append_step(
             "message": message,
         },
     ]
+
+
+def _filing_text_unavailable_update(
+    state: FinSightState,
+    message: str,
+) -> FinSightState:
+    return {
+        "filing_text": None,
+        "risk_factors": [],
+        "warnings": [
+            *state.get("warnings", []),
+            {
+                "code": "filing_text_unavailable",
+                "message": message,
+                "severity": "warning",
+            },
+        ],
+        "agent_steps": _append_step(
+            state,
+            "fetch_filing_text",
+            "completed",
+            "Could not retrieve latest 10-K risk-factor text.",
+        ),
+    }
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_cik(cik: str) -> str:
+    digits = "".join(char for char in str(cik).strip() if char.isdigit())
+    return digits.zfill(10)
+
+
+def _sec_submissions_url(cik: str) -> str:
+    return f"https://data.sec.gov/submissions/CIK{cik}.json"
+
+
+def _sec_company_facts_url(cik: str) -> str:
+    return f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+
+
+def _filing_source(
+    cik: str | None,
+    filing: dict[str, Any] | None,
+    label: str,
+) -> dict[str, Any] | None:
+    if cik is None or filing is None:
+        return None
+
+    normalized_cik = _normalize_cik(cik)
+    return {
+        "source_type": "sec_filing",
+        "label": label,
+        "cik": normalized_cik,
+        "form": filing.get("form"),
+        "filing_date": filing.get("filing_date"),
+        "report_date": filing.get("report_date"),
+        "accession_number": filing.get("accession_number"),
+        "primary_document": filing.get("primary_document"),
+        "url": _filing_document_url(
+            cik=normalized_cik,
+            accession_number=filing.get("accession_number"),
+            primary_document=filing.get("primary_document"),
+        ),
+    }
+
+
+def _filing_document_url(
+    *,
+    cik: str,
+    accession_number: str | None,
+    primary_document: str | None,
+) -> str | None:
+    if not accession_number or not primary_document:
+        return None
+
+    cik_path = str(int(cik))
+    accession_path = normalize_accession_number(accession_number)
+    return (
+        "https://www.sec.gov/Archives/edgar/data/"
+        f"{cik_path}/{accession_path}/{primary_document}"
+    )

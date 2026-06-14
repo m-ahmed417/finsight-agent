@@ -1,4 +1,6 @@
 from datetime import date
+from html import unescape
+import re
 from typing import Any
 
 from pydantic import BaseModel, ValidationError, field_validator
@@ -40,6 +42,11 @@ class FilingRecord(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+
+class RiskFactorsSection(BaseModel):
+    item: str
+    text: str
 
 
 def get_recent_filings(submissions: dict[str, Any]) -> list[FilingRecord]:
@@ -105,6 +112,33 @@ def normalize_accession_number(accession_number: str) -> str:
     return accession_number.strip().replace("-", "")
 
 
+def extract_risk_factors_section(filing_text: str) -> RiskFactorsSection | None:
+    plain_text = _to_plain_text(filing_text)
+    start_match = re.search(
+        r"\bitem\s+1a\.?\s+risk\s+factors\b",
+        plain_text,
+        flags=re.IGNORECASE,
+    )
+    if start_match is None:
+        return None
+
+    end_match = re.search(
+        r"\bitem\s+(?:1b|2)\.?\b",
+        plain_text[start_match.end() :],
+        flags=re.IGNORECASE,
+    )
+    section_end = (
+        start_match.end() + end_match.start()
+        if end_match is not None
+        else len(plain_text)
+    )
+    section_text = _clean_section_text(plain_text[start_match.end() : section_end])
+    if not section_text:
+        return None
+
+    return RiskFactorsSection(item="1A", text=section_text)
+
+
 def _get_recent_filings_data(submissions: dict[str, Any]) -> dict[str, Any]:
     filings = submissions.get("filings")
     if not isinstance(filings, dict):
@@ -122,3 +156,13 @@ def _get_indexed_value(data: dict[str, Any], key: str, index: int) -> Any:
     if not isinstance(values, list):
         return None
     return values[index]
+
+
+def _to_plain_text(filing_text: str) -> str:
+    without_tags = re.sub(r"<[^>]+>", " ", filing_text)
+    return unescape(without_tags)
+
+
+def _clean_section_text(text: str) -> str:
+    lines = [" ".join(line.strip().split()) for line in text.strip().splitlines()]
+    return "\n".join(line for line in lines if line)

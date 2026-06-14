@@ -15,6 +15,9 @@ class FinSightState(TypedDict, total=False):
     company_facts: dict[str, Any] | None
     latest_10k: dict[str, Any] | None
     latest_10q: dict[str, Any] | None
+    filing_text: str | None
+    risk_factors: list[dict[str, Any]]
+    risk_themes: list[dict[str, Any]]
     financial_metrics: dict[str, Any] | None
     report_draft: str | None
     final_report: str | None
