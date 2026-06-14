@@ -17,7 +17,11 @@ from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 from finsight_agent.app.services.report_generator import generate_research_report
 
 
-def build_research_graph(resolver: Any, sec_client: Any):
+def build_research_graph(
+    resolver: Any,
+    sec_client: Any,
+    llm_client: Any | None = None,
+):
     graph = StateGraph(FinSightState)
 
     graph.add_node("initialize", _initialize_state)
@@ -25,7 +29,7 @@ def build_research_graph(resolver: Any, sec_client: Any):
     graph.add_node("fetch_sec_data", _make_fetch_sec_data_node(sec_client))
     graph.add_node("identify_filings", _identify_filings)
     graph.add_node("fetch_filing_text", _make_fetch_filing_text_node(sec_client))
-    graph.add_node("analyze_risks", _analyze_risks)
+    graph.add_node("analyze_risks", _make_analyze_risks_node(llm_client))
     graph.add_node("extract_metrics", _extract_metrics)
     graph.add_node("synthesize_research", _synthesize_research)
     graph.add_node("generate_report", _generate_report)
@@ -334,29 +338,47 @@ def _make_fetch_filing_text_node(sec_client: Any):
     return fetch_filing_text
 
 
-def _analyze_risks(state: FinSightState) -> FinSightState:
-    analysis = analyze_risk_factors(state.get("risk_factors", []))
-    warnings = [
-        *state.get("warnings", []),
-        *analysis.get("warnings", []),
-    ]
-    themes = analysis.get("themes", [])
-    message = (
-        "Generated deterministic risk themes from extracted 10-K text."
-        if themes
-        else "Risk-factor text was unavailable for analysis."
-    )
+def _make_analyze_risks_node(llm_client: Any | None):
+    def analyze_risks(state: FinSightState) -> FinSightState:
+        risk_factors = state.get("risk_factors", [])
+        warnings = state.get("warnings", [])
+        used_llm = False
+        if llm_client is not None:
+            try:
+                analysis = _validate_risk_analysis(llm_client.summarize_risks(risk_factors))
+                used_llm = True
+            except Exception as exc:
+                warnings = [
+                    *warnings,
+                    {
+                        "code": "llm_risk_analysis_unavailable",
+                        "message": str(exc),
+                        "severity": "warning",
+                    },
+                ]
+                analysis = analyze_risk_factors(risk_factors)
+        else:
+            analysis = analyze_risk_factors(risk_factors)
 
-    return {
-        "risk_themes": themes,
-        "warnings": warnings,
-        "agent_steps": _append_step(
-            state,
-            "analyze_risks",
-            "completed",
-            message,
-        ),
-    }
+        warnings = [
+            *warnings,
+            *analysis.get("warnings", []),
+        ]
+        themes = analysis.get("themes", [])
+        message = _risk_analysis_message(themes, used_llm)
+
+        return {
+            "risk_themes": themes,
+            "warnings": warnings,
+            "agent_steps": _append_step(
+                state,
+                "analyze_risks",
+                "completed",
+                message,
+            ),
+        }
+
+    return analyze_risks
 
 
 def _extract_metrics(state: FinSightState) -> FinSightState:
@@ -505,6 +527,31 @@ def _append_step(
             "message": message,
         },
     ]
+
+
+def _validate_risk_analysis(analysis: Any) -> dict[str, Any]:
+    if not isinstance(analysis, dict):
+        msg = "LLM risk analysis must return a dictionary."
+        raise ValueError(msg)
+
+    themes = analysis.get("themes")
+    warnings = analysis.get("warnings", [])
+    if not isinstance(themes, list):
+        msg = "LLM risk analysis must include a themes list."
+        raise ValueError(msg)
+    if not isinstance(warnings, list):
+        msg = "LLM risk analysis warnings must be a list."
+        raise ValueError(msg)
+
+    return {"themes": themes, "warnings": warnings}
+
+
+def _risk_analysis_message(themes: list[dict[str, Any]], used_llm: bool) -> str:
+    if not themes:
+        return "Risk-factor text was unavailable for analysis."
+    if used_llm:
+        return "Generated LLM-assisted risk themes from extracted 10-K text."
+    return "Generated deterministic risk themes from extracted 10-K text."
 
 
 def _filing_text_unavailable_update(

@@ -46,6 +46,28 @@ class FilingDocumentFailingSECClient(FakeSECClient):
         raise RuntimeError("Filing document unavailable")
 
 
+class FakeLLMClient:
+    def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        return {
+            "themes": [
+                {
+                    "title": "LLM summarized risk",
+                    "summary": "A mock LLM summarized this risk from extracted filing text.",
+                    "source_form": risk_factors[0]["form"],
+                    "filing_date": risk_factors[0]["filing_date"],
+                    "accession_number": risk_factors[0]["accession_number"],
+                    "source_url": risk_factors[0]["source_url"],
+                }
+            ],
+            "warnings": [],
+        }
+
+
+class FailingLLMClient:
+    def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        raise RuntimeError("LLM unavailable")
+
+
 def load_fixture(name: str) -> dict:
     return json.loads((FIXTURES_DIR / name).read_text())
 
@@ -336,3 +358,72 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
         "message": "Risk-factor text was unavailable for analysis.",
     } in result["agent_steps"]
     assert result["errors"] == []
+
+
+def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=FakeLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["risk_themes"] == [
+        {
+            "title": "LLM summarized risk",
+            "summary": "A mock LLM summarized this risk from extracted filing text.",
+            "source_form": "10-K",
+            "filing_date": "2024-11-01",
+            "accession_number": "0000320193-24-000123",
+            "source_url": (
+                "https://www.sec.gov/Archives/edgar/data/320193/"
+                "000032019324000123/aapl-20240928.htm"
+            ),
+        }
+    ]
+    assert {
+        "node_name": "analyze_risks",
+        "status": "completed",
+        "message": "Generated LLM-assisted risk themes from extracted 10-K text.",
+    } in result["agent_steps"]
+
+
+def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=FailingLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["risk_themes"][0]["title"] == "Competitive pressure"
+    assert {
+        "code": "llm_risk_analysis_unavailable",
+        "message": "LLM unavailable",
+        "severity": "warning",
+    } in result["warnings"]
+    assert {
+        "node_name": "analyze_risks",
+        "status": "completed",
+        "message": "Generated deterministic risk themes from extracted 10-K text.",
+    } in result["agent_steps"]
