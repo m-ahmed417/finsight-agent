@@ -49,6 +49,8 @@ class FakeResearchRepository:
             status=status,
             ticker=graph_result.get("ticker"),
             company_name=graph_result.get("company_name"),
+            compliance_status=graph_result.get("compliance_status"),
+            report_quality_status=graph_result.get("report_quality_status"),
             final_report=graph_result.get("final_report"),
             financial_metrics_json=graph_result.get("financial_metrics"),
             filing_text_excerpt=(
@@ -101,6 +103,8 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
         {
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
+            "compliance_status": "allowed",
+            "report_quality_status": "passed",
             "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "filing_text": "Risk factor text from latest 10-K.",
@@ -134,6 +138,8 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
     assert body["status"] == "completed"
     assert body["ticker"] == "AAPL"
     assert body["company_name"] == "Apple Inc."
+    assert body["compliance_status"] == "allowed"
+    assert body["report_quality_status"] == "passed"
     assert body["financial_metrics"]["periods"][0]["revenue"] == 1250000000
     assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
     assert body["risk_factors"] == [{"form": "10-K", "text": "Risk factor text."}]
@@ -155,6 +161,8 @@ def test_post_research_returns_failed_result_when_graph_has_errors(
         {
             "ticker": None,
             "company_name": None,
+            "compliance_status": None,
+            "report_quality_status": None,
             "financial_metrics": None,
             "warnings": [],
             "errors": [
@@ -177,6 +185,8 @@ def test_post_research_returns_failed_result_when_graph_has_errors(
     assert body["status"] == "failed"
     assert body["ticker"] is None
     assert body["company_name"] is None
+    assert body["compliance_status"] is None
+    assert body["report_quality_status"] is None
     assert body["financial_metrics"] is None
     assert body["errors"][0]["code"] == "company_not_found"
     assert repository.created_runs[0]["status"] == "failed"
@@ -208,6 +218,8 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
         {
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
+            "compliance_status": "needs_rewrite",
+            "report_quality_status": "warning",
             "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "filing_text": "Risk factor text from latest 10-K.",
@@ -244,6 +256,8 @@ def test_get_research_returns_stored_run(client: TestClient) -> None:
     assert body["query"] == "AAPL"
     assert body["status"] == "completed"
     assert body["ticker"] == "AAPL"
+    assert body["compliance_status"] == "needs_rewrite"
+    assert body["report_quality_status"] == "warning"
     assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
     assert body["risk_themes"] == [{"title": "Competitive pressure"}]
     assert body["research_insights"]["bear_case"] == [{"title": "Competitive pressure"}]

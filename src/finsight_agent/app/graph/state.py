@@ -24,6 +24,7 @@ class FinSightState(TypedDict, total=False):
     report_draft: str | None
     final_report: str | None
     compliance_status: str | None
+    report_quality_status: str | None
 
     agent_steps: list[dict[str, Any]]
     sources: list[dict[str, Any]]

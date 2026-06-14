@@ -26,6 +26,8 @@ class ResearchRunRepository:
             status=status,
             ticker=graph_result.get("ticker"),
             company_name=graph_result.get("company_name"),
+            compliance_status=graph_result.get("compliance_status"),
+            report_quality_status=graph_result.get("report_quality_status"),
             final_report=graph_result.get("final_report"),
             financial_metrics_json=graph_result.get("financial_metrics"),
             filing_text_excerpt=_filing_text_excerpt(graph_result.get("filing_text")),

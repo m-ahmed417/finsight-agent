@@ -5,7 +5,10 @@ from langgraph.graph import END, StateGraph
 
 from finsight_agent.app.graph.state import FinSightState
 from finsight_agent.app.services.company_resolver import ResolutionStatus
-from finsight_agent.app.services.compliance import check_report_compliance
+from finsight_agent.app.services.compliance import (
+    check_report_compliance,
+    rewrite_unsafe_report,
+)
 from finsight_agent.app.services.filing_parser import (
     extract_risk_factors_section,
     find_latest_filing,
@@ -15,6 +18,12 @@ from finsight_agent.app.services.metrics import extract_financial_metrics
 from finsight_agent.app.services.research_synthesizer import synthesize_research_insights
 from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 from finsight_agent.app.services.report_generator import generate_research_report
+from finsight_agent.app.services.report_validator import validate_report_quality
+
+SEC_SUBMISSIONS_SOURCE_ID = "sec_submissions"
+SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
+LATEST_10K_SOURCE_ID = "latest_10k"
+LATEST_10Q_SOURCE_ID = "latest_10q"
 
 
 def build_research_graph(
@@ -35,6 +44,7 @@ def build_research_graph(
     graph.add_node("draft_report", _make_draft_report_node(llm_client))
     graph.add_node("generate_report", _generate_report)
     graph.add_node("compliance_check", _compliance_check)
+    graph.add_node("validate_report", _validate_report)
 
     graph.set_entry_point("initialize")
     graph.add_edge("initialize", "resolve_company")
@@ -61,7 +71,15 @@ def build_research_graph(
     graph.add_edge("synthesize_research", "draft_report")
     graph.add_edge("draft_report", "generate_report")
     graph.add_edge("generate_report", "compliance_check")
-    graph.add_edge("compliance_check", END)
+    graph.add_conditional_edges(
+        "compliance_check",
+        _route_after_compliance,
+        {
+            "validate": "validate_report",
+            "stop": END,
+        },
+    )
+    graph.add_edge("validate_report", END)
 
     return graph.compile()
 
@@ -87,6 +105,7 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "report_draft": state.get("report_draft"),
         "final_report": state.get("final_report"),
         "compliance_status": state.get("compliance_status"),
+        "report_quality_status": state.get("report_quality_status"),
         "agent_steps": state.get("agent_steps", []),
         "sources": state.get("sources", []),
         "warnings": state.get("warnings", []),
@@ -210,6 +229,7 @@ def _make_fetch_sec_data_node(sec_client: Any):
             "sources": [
                 *state.get("sources", []),
                 {
+                    "source_id": SEC_SUBMISSIONS_SOURCE_ID,
                     "source_type": "sec_submissions",
                     "label": "SEC submissions",
                     "cik": normalized_cik,
@@ -217,6 +237,7 @@ def _make_fetch_sec_data_node(sec_client: Any):
                     "retrieved_at": retrieved_at,
                 },
                 {
+                    "source_id": SEC_COMPANY_FACTS_SOURCE_ID,
                     "source_type": "sec_company_facts",
                     "label": "SEC company facts",
                     "cik": normalized_cik,
@@ -250,8 +271,18 @@ def _identify_filings(state: FinSightState) -> FinSightState:
             *[
                 source
                 for source in (
-                    _filing_source(state.get("cik"), latest_10k_data, "Latest 10-K filing"),
-                    _filing_source(state.get("cik"), latest_10q_data, "Latest 10-Q filing"),
+                    _filing_source(
+                        state.get("cik"),
+                        latest_10k_data,
+                        "Latest 10-K filing",
+                        LATEST_10K_SOURCE_ID,
+                    ),
+                    _filing_source(
+                        state.get("cik"),
+                        latest_10q_data,
+                        "Latest 10-Q filing",
+                        LATEST_10Q_SOURCE_ID,
+                    ),
                 )
                 if source is not None
             ],
@@ -387,15 +418,17 @@ def _make_analyze_risks_node(llm_client: Any | None):
 def _extract_metrics(state: FinSightState) -> FinSightState:
     company_facts = state.get("company_facts") or {}
     metrics = extract_financial_metrics(company_facts)
-    warnings = state.get("warnings", [])
-    warnings.extend(
-        {
-            "code": "metric_warning",
-            "message": warning,
-            "severity": "warning",
-        }
-        for warning in metrics.get("warnings", [])
-    )
+    warnings = [
+        *state.get("warnings", []),
+        *[
+            {
+                "code": "metric_warning",
+                "message": warning,
+                "severity": "warning",
+            }
+            for warning in metrics.get("warnings", [])
+        ],
+    ]
 
     return {
         "financial_metrics": metrics,
@@ -509,27 +542,40 @@ def _generate_report(state: FinSightState) -> FinSightState:
 def _compliance_check(state: FinSightState) -> FinSightState:
     report_draft = state.get("report_draft") or ""
     result = check_report_compliance(report_draft)
-    warnings = state.get("warnings", [])
-    warnings.extend(
-        {
-            "code": "compliance_warning",
-            "message": warning,
-            "severity": "warning",
-        }
-        for warning in result.warnings
-    )
+    warnings = [
+        *state.get("warnings", []),
+        *_compliance_warning_updates(result.warnings),
+    ]
 
     if result.safe_report is None:
-        errors = state.get("errors", [])
-        errors.append(
+        rewrite_result = rewrite_unsafe_report(report_draft)
+        warnings = [
+            *warnings,
+            *_compliance_warning_updates(rewrite_result.warnings),
+        ]
+        if rewrite_result.safe_report is not None:
+            return {
+                "compliance_status": rewrite_result.status.value,
+                "final_report": rewrite_result.safe_report,
+                "warnings": warnings,
+                "agent_steps": _append_step(
+                    state,
+                    "compliance_check",
+                    "completed",
+                    "Report required deterministic compliance rewrite and passed.",
+                ),
+            }
+
+        errors = [
+            *state.get("errors", []),
             {
                 "code": "compliance_blocked",
                 "message": "Report contained unsafe financial-advice language.",
                 "severity": "error",
-            }
-        )
+            },
+        ]
         return {
-            "compliance_status": result.status.value,
+            "compliance_status": rewrite_result.status.value,
             "final_report": None,
             "warnings": warnings,
             "errors": errors,
@@ -554,12 +600,58 @@ def _compliance_check(state: FinSightState) -> FinSightState:
     }
 
 
+def _compliance_warning_updates(warnings: list[str]) -> list[dict[str, str]]:
+    return [
+        {
+            "code": "compliance_warning",
+            "message": warning,
+            "severity": "warning",
+        }
+        for warning in warnings
+    ]
+
+
+def _validate_report(state: FinSightState) -> FinSightState:
+    result = validate_report_quality(state.get("final_report"))
+    warnings = [
+        *state.get("warnings", []),
+        *[
+            {
+                "code": "report_quality_warning",
+                "message": warning["message"],
+                "severity": warning["severity"],
+                "details": {"validator_code": warning["code"]},
+            }
+            for warning in result.warnings
+        ],
+    ]
+    message = (
+        "Report quality validation completed without warnings."
+        if not result.warnings
+        else "Report quality validation completed with warnings."
+    )
+    return {
+        "report_quality_status": result.status.value,
+        "warnings": warnings,
+        "agent_steps": _append_step(
+            state,
+            "validate_report",
+            "completed",
+            message,
+        ),
+    }
+
+
 def _route_after_resolve(state: FinSightState) -> str:
     return "stop" if state.get("errors") else "continue"
 
 
 def _route_after_sec_fetch(state: FinSightState) -> str:
     return "stop" if state.get("errors") else "continue"
+
+
+def _route_after_compliance(state: FinSightState) -> str:
+    return "validate" if state.get("final_report") else "stop"
 
 
 def _company_to_candidate(company: Any) -> dict[str, str]:
@@ -710,12 +802,14 @@ def _filing_source(
     cik: str | None,
     filing: dict[str, Any] | None,
     label: str,
+    source_id: str,
 ) -> dict[str, Any] | None:
     if cik is None or filing is None:
         return None
 
     normalized_cik = _normalize_cik(cik)
     return {
+        "source_id": source_id,
         "source_type": "sec_filing",
         "label": label,
         "cik": normalized_cik,

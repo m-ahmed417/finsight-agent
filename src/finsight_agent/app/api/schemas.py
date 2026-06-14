@@ -34,6 +34,8 @@ class ResearchResponse(BaseModel):
     status: str
     ticker: str | None = None
     company_name: str | None = None
+    compliance_status: str | None = None
+    report_quality_status: str | None = None
     report: str | None = None
     financial_metrics: dict[str, Any] | None = None
     filing_text_excerpt: str | None = None

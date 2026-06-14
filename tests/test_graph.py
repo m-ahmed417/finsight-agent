@@ -2,7 +2,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from finsight_agent.app.graph.builder import build_research_graph
+from finsight_agent.app.graph.builder import (
+    _compliance_check,
+    _extract_metrics,
+    build_research_graph,
+)
 from finsight_agent.app.services.company_resolver import CompanyRecord, CompanyResolver
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -94,12 +98,107 @@ class InvalidReportDraftLLMClient(FakeLLMClient):
         return {"sections": {"executive_summary": []}, "warnings": []}
 
 
+class UnsafeReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": "LLM-written graph financial performance.",
+                "risk_factors": ["LLM-written graph risk factor."],
+                "bull_case": ["You should buy this stock because growth is guaranteed."],
+                "bear_case": ["The price will crash if execution weakens."],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
+class UnrewritableUnsafeReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": "LLM-written graph financial performance.",
+                "risk_factors": ["LLM-written graph risk factor."],
+                "bull_case": ["This report includes buybuy wording."],
+                "bear_case": ["LLM-written graph bear case."],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
 def load_fixture(name: str) -> dict:
     return json.loads((FIXTURES_DIR / name).read_text())
 
 
 def source_by_type(sources: list[dict], source_type: str) -> dict:
     return next(source for source in sources if source["source_type"] == source_type)
+
+
+def test_extract_metrics_does_not_mutate_existing_state_warnings() -> None:
+    existing_warnings = [
+        {
+            "code": "existing_warning",
+            "message": "Existing warning.",
+            "severity": "warning",
+        }
+    ]
+    state = {
+        "company_facts": {},
+        "warnings": existing_warnings,
+        "agent_steps": [],
+    }
+
+    result = _extract_metrics(state)
+
+    assert state["warnings"] == [
+        {
+            "code": "existing_warning",
+            "message": "Existing warning.",
+            "severity": "warning",
+        }
+    ]
+    assert result["warnings"] is not state["warnings"]
+    assert result["warnings"] == [
+        *existing_warnings,
+        {
+            "code": "metric_warning",
+            "message": "Revenue could not be extracted from SEC company facts.",
+            "severity": "warning",
+        },
+    ]
+
+
+def test_compliance_check_does_not_mutate_existing_warning_or_error_lists() -> None:
+    existing_warnings = [
+        {
+            "code": "existing_warning",
+            "message": "Existing warning.",
+            "severity": "warning",
+        }
+    ]
+    existing_errors: list[dict[str, str]] = []
+    state = {
+        "report_draft": "This report includes buybuy wording.",
+        "warnings": existing_warnings,
+        "errors": existing_errors,
+        "agent_steps": [],
+    }
+
+    result = _compliance_check(state)
+
+    assert state["warnings"] == existing_warnings
+    assert state["errors"] == []
+    assert result["warnings"] is not state["warnings"]
+    assert result["errors"] is not state["errors"]
+    assert result["errors"] == [
+        {
+            "code": "compliance_blocked",
+            "message": "Report contained unsafe financial-advice language.",
+            "severity": "error",
+        }
+    ]
 
 
 def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() -> None:
@@ -214,6 +313,16 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         for source in result["sources"]
         if source["source_type"] == "sec_filing" and source["form"] == "10-Q"
     )
+    source_ids = [source["source_id"] for source in result["sources"]]
+    assert source_ids == [
+        "sec_submissions",
+        "sec_company_facts",
+        "latest_10k",
+        "latest_10q",
+    ]
+    assert len(source_ids) == len(set(source_ids))
+    assert submissions_source["source_id"] == "sec_submissions"
+    assert company_facts_source["source_id"] == "sec_company_facts"
     assert submissions_source["url"] == (
         "https://data.sec.gov/submissions/CIK0000320193.json"
     )
@@ -223,6 +332,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert submissions_source["cik"] == "0000320193"
     assert datetime.fromisoformat(submissions_source["retrieved_at"])
     assert filing_10k_source == {
+        "source_id": "latest_10k",
         "source_type": "sec_filing",
         "label": "Latest 10-K filing",
         "cik": "0000320193",
@@ -236,6 +346,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
             "000032019324000123/aapl-20240928.htm"
         ),
     }
+    assert filing_10q_source["source_id"] == "latest_10q"
     assert filing_10q_source["accession_number"] == "0000320193-24-000099"
     assert "# FinSight Research Brief: Apple Inc. (AAPL)" in result["final_report"]
     assert "## 5. Key Financial Metrics" in result["final_report"]
@@ -251,6 +362,7 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "draft_report",
         "generate_report",
         "compliance_check",
+        "validate_report",
     ]
     assert all(step["status"] == "completed" for step in result["agent_steps"])
     assert result["errors"] == []
@@ -522,3 +634,82 @@ def test_research_graph_falls_back_when_llm_report_draft_is_invalid() -> None:
         "status": "completed",
         "message": "Using deterministic report generator after LLM report drafting failed.",
     } in result["agent_steps"]
+
+
+def test_research_graph_rewrites_unsafe_llm_report_language() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=UnsafeReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["compliance_status"] == "needs_rewrite"
+    assert result["final_report"] is not None
+    assert "you should buy" not in result["final_report"].casefold()
+    assert "guaranteed" not in result["final_report"].casefold()
+    assert "price will crash" not in result["final_report"].casefold()
+    assert {
+        "code": "compliance_warning",
+        "message": (
+            "Unsafe financial-advice language was rewritten into neutral "
+            "research phrasing."
+        ),
+        "severity": "warning",
+    } in result["warnings"]
+    assert {
+        "node_name": "compliance_check",
+        "status": "completed",
+        "message": "Report required deterministic compliance rewrite and passed.",
+    } in result["agent_steps"]
+    assert {
+        "node_name": "validate_report",
+        "status": "completed",
+        "message": "Report quality validation completed without warnings.",
+    } in result["agent_steps"]
+    assert result["errors"] == []
+
+
+def test_research_graph_blocks_when_rewrite_cannot_make_report_safe() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=UnrewritableUnsafeReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["compliance_status"] == "blocked"
+    assert result["final_report"] is None
+    assert {
+        "code": "compliance_blocked",
+        "message": "Report contained unsafe financial-advice language.",
+        "severity": "error",
+    } in result["errors"]
+    assert {
+        "node_name": "compliance_check",
+        "status": "failed",
+        "message": "Report contained unsafe financial-advice language.",
+    } in result["agent_steps"]
+    assert not any(
+        step["node_name"] == "validate_report" for step in result["agent_steps"]
+    )

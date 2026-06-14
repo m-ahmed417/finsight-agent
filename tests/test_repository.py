@@ -26,6 +26,8 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
         graph_result={
             "ticker": "AAPL",
             "company_name": "Apple Inc.",
+            "compliance_status": "allowed",
+            "report_quality_status": "passed",
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "filing_text": "Risk factor text " * 300,
             "risk_factors": [
@@ -79,6 +81,8 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert retrieved.status == "completed"
     assert retrieved.ticker == "AAPL"
     assert retrieved.company_name == "Apple Inc."
+    assert retrieved.compliance_status == "allowed"
+    assert retrieved.report_quality_status == "passed"
     assert retrieved.financial_metrics_json == {
         "periods": [{"fy": 2024, "revenue": 1250000000}]
     }

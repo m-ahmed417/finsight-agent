@@ -107,6 +107,8 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
         status=run.status,
         ticker=run.ticker,
         company_name=run.company_name,
+        compliance_status=run.compliance_status,
+        report_quality_status=run.report_quality_status,
         report=run.final_report,
         financial_metrics=run.financial_metrics_json,
         filing_text_excerpt=run.filing_text_excerpt,

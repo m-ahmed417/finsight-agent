@@ -45,6 +45,8 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "ticker",
         "company_name",
         "status",
+        "compliance_status",
+        "report_quality_status",
         "final_report",
         "financial_metrics_json",
         "filing_text_excerpt",

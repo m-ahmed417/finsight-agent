@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -19,6 +20,73 @@ FORBIDDEN_TERMS = (
     "price will crash",
 )
 
+COMPLIANCE_REWRITE_WARNING = (
+    "Unsafe financial-advice language was rewritten into neutral research phrasing."
+)
+
+REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\bstrong\s+buy\b", re.IGNORECASE),
+        "a positive research view",
+    ),
+    (
+        re.compile(r"\bstrong\s+sell\b", re.IGNORECASE),
+        "a negative research view",
+    ),
+    (
+        re.compile(r"\byou\s+should\s+invest\b", re.IGNORECASE),
+        "readers may review the evidence",
+    ),
+    (
+        re.compile(r"\byou\s+should\s+buy\b", re.IGNORECASE),
+        "the evidence may support a positive research view of",
+    ),
+    (
+        re.compile(r"\byou\s+should\s+sell\b", re.IGNORECASE),
+        "the evidence may support a negative research view of",
+    ),
+    (
+        re.compile(r"\byou\s+should\s+hold\b", re.IGNORECASE),
+        "the evidence may support a neutral research view of",
+    ),
+    (
+        re.compile(r"\bput\s+your\s+money\s+into\b", re.IGNORECASE),
+        "review the evidence for",
+    ),
+    (
+        re.compile(r"\ballocate\s+your\s+portfolio\b", re.IGNORECASE),
+        "review portfolio implications independently",
+    ),
+    (
+        re.compile(r"\bprice\s+will\s+go\s+up\b", re.IGNORECASE),
+        "future price movement is uncertain",
+    ),
+    (
+        re.compile(r"\bprice\s+will\s+crash\b", re.IGNORECASE),
+        "future price movement is uncertain",
+    ),
+    (
+        re.compile(r"\bguaranteed\b", re.IGNORECASE),
+        "uncertain",
+    ),
+    (
+        re.compile(r"\brisk-free\b", re.IGNORECASE),
+        "subject to risk",
+    ),
+    (
+        re.compile(r"\bbuy\b", re.IGNORECASE),
+        "positive research view",
+    ),
+    (
+        re.compile(r"\bsell\b", re.IGNORECASE),
+        "negative research view",
+    ),
+    (
+        re.compile(r"\bhold\b", re.IGNORECASE),
+        "neutral research view",
+    ),
+)
+
 
 class ComplianceStatus(StrEnum):
     ALLOWED = "allowed"
@@ -34,7 +102,7 @@ class ComplianceResult(BaseModel):
 
 
 def check_report_compliance(report: str) -> ComplianceResult:
-    flagged_terms = _find_forbidden_terms(report)
+    flagged_terms = find_forbidden_terms(report)
     if flagged_terms:
         return ComplianceResult(
             status=ComplianceStatus.BLOCKED,
@@ -56,6 +124,30 @@ def check_report_compliance(report: str) -> ComplianceResult:
     )
 
 
-def _find_forbidden_terms(report: str) -> list[str]:
+def rewrite_unsafe_report(report: str) -> ComplianceResult:
+    report_without_notice = report.replace(RESEARCH_ONLY_NOTICE, "", 1)
+    rewritten_report = report_without_notice
+    for pattern, replacement in REWRITE_RULES:
+        rewritten_report = pattern.sub(replacement, rewritten_report)
+
+    if RESEARCH_ONLY_NOTICE in report:
+        rewritten_report = f"{RESEARCH_ONLY_NOTICE}{rewritten_report}"
+
+    if rewritten_report == report:
+        return check_report_compliance(report)
+
+    compliance_result = check_report_compliance(rewritten_report)
+    if compliance_result.safe_report is None:
+        return compliance_result
+
+    return ComplianceResult(
+        status=ComplianceStatus.NEEDS_REWRITE,
+        safe_report=compliance_result.safe_report,
+        flagged_terms=[],
+        warnings=[COMPLIANCE_REWRITE_WARNING, *compliance_result.warnings],
+    )
+
+
+def find_forbidden_terms(report: str) -> list[str]:
     normalized_report = report.replace(RESEARCH_ONLY_NOTICE, "").casefold()
     return [term for term in FORBIDDEN_TERMS if term in normalized_report]

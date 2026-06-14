@@ -20,6 +20,8 @@ class ResearchRun(Base):
     ticker: Mapped[str | None] = mapped_column(String(20), nullable=True)
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
+    compliance_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    report_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
     financial_metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     filing_text_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
