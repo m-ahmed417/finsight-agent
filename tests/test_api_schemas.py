@@ -1,0 +1,104 @@
+import pytest
+from pydantic import ValidationError
+
+from finsight_agent.app.api.schemas import (
+    AgentStep,
+    ResearchError,
+    ResearchWarning,
+    SourceMetadata,
+)
+
+
+def test_source_metadata_preserves_rich_sec_provenance() -> None:
+    source = SourceMetadata.model_validate(
+        {
+            "source_id": "latest_10k",
+            "source_type": "sec_filing",
+            "label": "Latest 10-K filing",
+            "publisher": "U.S. Securities and Exchange Commission",
+            "cik": "0000320193",
+            "company_name": "Apple Inc.",
+            "ticker": "AAPL",
+            "url": "https://www.sec.gov/Archives/example.htm",
+            "form": "10-K",
+            "filing_date": "2024-11-01",
+            "report_date": "2024-09-28",
+            "accession_number": "0000320193-24-000123",
+            "accession_path": "000032019324000123",
+            "primary_document": "aapl-20240928.htm",
+            "metadata_source_ids": ["sec_submissions"],
+            "document_retrieved_at": "2026-06-15T10:01:00+00:00",
+            "document_character_count": 12345,
+            "extraction_status": "risk_factors_extracted",
+            "extracted_sections": ["Item 1A Risk Factors"],
+            "risk_factor_text_character_count": 1500,
+            "cache_status": "hit",
+        }
+    )
+
+    assert source.source_id == "latest_10k"
+    assert source.form == "10-K"
+    assert source.metadata_source_ids == ["sec_submissions"]
+    assert source.extracted_sections == ["Item 1A Risk Factors"]
+    assert source.model_dump()["cache_status"] == "hit"
+
+
+def test_source_metadata_rejects_blank_source_id() -> None:
+    with pytest.raises(ValidationError, match="Source ID cannot be empty"):
+        SourceMetadata.model_validate({"source_id": "   "})
+
+
+def test_agent_step_validates_required_fields_and_preserves_extra_metadata() -> None:
+    step = AgentStep.model_validate(
+        {
+            "node_name": " fetch_sec_data ",
+            "status": " completed ",
+            "message": "Fetched SEC submissions and company facts.",
+            "duration_ms": 125,
+        }
+    )
+
+    assert step.node_name == "fetch_sec_data"
+    assert step.status == "completed"
+    assert step.model_dump()["duration_ms"] == 125
+
+
+def test_agent_step_rejects_blank_required_fields() -> None:
+    with pytest.raises(ValidationError, match="Agent step field cannot be empty"):
+        AgentStep.model_validate({"node_name": "resolve_company", "status": " "})
+
+
+def test_research_warning_validates_core_fields_and_preserves_details() -> None:
+    warning = ResearchWarning.model_validate(
+        {
+            "code": " report_quality_warning ",
+            "message": "Report section is missing source_id citations.",
+            "severity": " warning ",
+            "details": {"validator_code": "missing_section_citation"},
+            "source_id": "latest_10k",
+        }
+    )
+
+    assert warning.code == "report_quality_warning"
+    assert warning.severity == "warning"
+    assert warning.details == {"validator_code": "missing_section_citation"}
+    assert warning.model_dump()["source_id"] == "latest_10k"
+
+
+def test_research_error_defaults_to_error_severity() -> None:
+    error = ResearchError.model_validate(
+        {
+            "code": "company_not_found",
+            "message": "Could not confidently resolve the company.",
+        }
+    )
+
+    assert error.severity == "error"
+
+
+def test_research_warning_and_error_reject_blank_messages() -> None:
+    with pytest.raises(ValidationError, match="Research warning field cannot be empty"):
+        ResearchWarning.model_validate({"code": "metric_warning", "message": " "})
+
+    with pytest.raises(ValidationError, match="Research error field cannot be empty"):
+        ResearchError.model_validate({"code": "company_not_found", "message": " "})

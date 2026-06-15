@@ -18,6 +18,10 @@ from finsight_agent.app.api.schemas import (
 from finsight_agent.app.db.models import AgentStep, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunRepository
 from finsight_agent.app.services.company_resolver import CompanyResolver
+from finsight_agent.app.services.graph_result_validator import (
+    GraphResultValidationError,
+    validate_graph_result,
+)
 
 router = APIRouter()
 
@@ -57,7 +61,15 @@ def research(
     graph_runner: ResearchGraphRunner = Depends(get_research_graph_runner),
     repository: ResearchRunRepository = Depends(get_research_repository),
 ) -> ResearchResponse:
-    graph_result = graph_runner.invoke({"user_query": request.query})
+    raw_graph_result = graph_runner.invoke({"user_query": request.query})
+    try:
+        graph_result = validate_graph_result(raw_graph_result)
+    except GraphResultValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Graph result validation failed: {exc}",
+        ) from exc
+
     errors = graph_result.get("errors", [])
     run_id = uuid4()
     run = repository.create_from_graph_result(
