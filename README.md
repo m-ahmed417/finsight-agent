@@ -32,6 +32,8 @@ Core environment variables:
 APP_ENV=local
 DATABASE_URL=sqlite:///./finsight.db
 SEC_USER_AGENT=FinSight/0.1 your-email@example.com
+SEC_CACHE_DIR=.finsight_cache/sec
+SEC_REQUEST_INTERVAL_SECONDS=0.1
 LLM_PROVIDER=mock
 LLM_MODEL=mock
 OPENAI_API_KEY=

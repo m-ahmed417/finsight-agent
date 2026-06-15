@@ -102,9 +102,17 @@ def test_get_cached_company_resolver_reuses_loaded_resolver(monkeypatch) -> None
     monkeypatch.setattr(
         resolver_loader,
         "get_settings",
-        lambda: SimpleNamespace(sec_user_agent="FinSightTest/0.1 test@example.com"),
+        lambda: SimpleNamespace(
+            sec_user_agent="FinSightTest/0.1 test@example.com",
+            sec_cache_dir=".tmp/sec-cache",
+            sec_request_interval_seconds=0.25,
+        ),
     )
-    monkeypatch.setattr(resolver_loader, "SECClient", lambda user_agent: sec_client)
+    monkeypatch.setattr(
+        resolver_loader,
+        "SECClient",
+        lambda user_agent, cache_dir=None, min_request_interval_seconds=0.0: sec_client,
+    )
     get_cached_company_resolver.cache_clear()
 
     first_resolver = get_cached_company_resolver()
@@ -114,3 +122,40 @@ def test_get_cached_company_resolver_reuses_loaded_resolver(monkeypatch) -> None
     assert sec_client.calls == 1
 
     get_cached_company_resolver.cache_clear()
+
+
+def test_build_company_resolver_passes_sec_settings(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class CapturingSECClient(FakeSECClient):
+        def __init__(
+            self,
+            user_agent: str,
+            cache_dir: str | None = None,
+            min_request_interval_seconds: float = 0.0,
+        ) -> None:
+            super().__init__(load_fixture("sec_company_tickers.json"))
+            captured["user_agent"] = user_agent
+            captured["cache_dir"] = cache_dir
+            captured["min_request_interval_seconds"] = min_request_interval_seconds
+
+    monkeypatch.setattr(
+        resolver_loader,
+        "get_settings",
+        lambda: SimpleNamespace(
+            sec_user_agent="FinSightTest/0.1 test@example.com",
+            sec_cache_dir=".tmp/sec-cache",
+            sec_request_interval_seconds=0.25,
+        ),
+    )
+    monkeypatch.setattr(resolver_loader, "SECClient", CapturingSECClient)
+
+    resolver = build_company_resolver()
+    result = resolver.resolve("AAPL")
+
+    assert captured == {
+        "user_agent": "FinSightTest/0.1 test@example.com",
+        "cache_dir": ".tmp/sec-cache",
+        "min_request_interval_seconds": 0.25,
+    }
+    assert result.status == ResolutionStatus.EXACT_TICKER_MATCH

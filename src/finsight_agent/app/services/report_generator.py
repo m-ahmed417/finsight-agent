@@ -129,21 +129,25 @@ def _sources_section(
     sources: list[dict[str, Any]],
 ) -> str:
     source_lines: list[str] = []
-    if latest_10k:
+    seen_source_ids: set[str] = set()
+    for source in sources:
+        source_lines.append(_format_source_line(source))
+        source_id = str(source.get("source_id", "")).strip()
+        if source_id:
+            seen_source_ids.add(source_id)
+
+    if latest_10k and LATEST_10K_SOURCE_ID not in seen_source_ids:
         source_lines.append(
             f"- [{LATEST_10K_SOURCE_ID}] Latest 10-K: "
             f"filed {latest_10k.get('filing_date')}, "
             f"accession {latest_10k.get('accession_number')}."
         )
-    if latest_10q:
+    if latest_10q and LATEST_10Q_SOURCE_ID not in seen_source_ids:
         source_lines.append(
             f"- [{LATEST_10Q_SOURCE_ID}] Latest 10-Q: "
             f"filed {latest_10q.get('filing_date')}, "
             f"accession {latest_10q.get('accession_number')}."
         )
-    source_lines.extend(
-        _format_source_line(source) for source in sources
-    )
 
     if not source_lines:
         return "No sources were recorded."
@@ -281,9 +285,45 @@ def _format_source_line(source: dict[str, Any]) -> str:
     source_id = str(source.get("source_id", "")).strip()
     label_prefix = f"[{source_id}] " if source_id else ""
     url = source.get("url")
+    details = _source_detail_fragments(source)
+    detail_suffix = f" ({'; '.join(details)})" if details else ""
     if url:
-        return f"- {label_prefix}{label}: {url}"
-    return f"- {label_prefix}{label}"
+        return f"- {label_prefix}{label}: {url}{detail_suffix}"
+    return f"- {label_prefix}{label}{detail_suffix}"
+
+
+def _source_detail_fragments(source: dict[str, Any]) -> list[str]:
+    details: list[str] = []
+    if source.get("form") and source.get("filing_date"):
+        details.append(f"{source['form']} filed {source['filing_date']}")
+    elif source.get("filing_date"):
+        details.append(f"filed {source['filing_date']}")
+
+    if source.get("report_date"):
+        details.append(f"report date {source['report_date']}")
+    if source.get("accession_number"):
+        details.append(f"accession {source['accession_number']}")
+    if source.get("primary_document"):
+        details.append(f"primary document {source['primary_document']}")
+    if source.get("metric_fiscal_years"):
+        fiscal_years = ", ".join(str(year) for year in source["metric_fiscal_years"])
+        details.append(f"metric fiscal years {fiscal_years}")
+    if source.get("xbrl_tags_used"):
+        tags = ", ".join(str(tag) for tag in source["xbrl_tags_used"])
+        details.append(f"XBRL tags used: {tags}")
+    if source.get("extracted_sections"):
+        sections = ", ".join(str(section) for section in source["extracted_sections"])
+        details.append(f"extracted sections: {sections}")
+    if source.get("extraction_status"):
+        details.append(str(source["extraction_status"]).replace("_", " "))
+    if source.get("document_retrieved_at"):
+        details.append(f"document retrieved {source['document_retrieved_at']}")
+    elif source.get("retrieved_at"):
+        details.append(f"retrieved {source['retrieved_at']}")
+    elif source.get("metadata_retrieved_at"):
+        details.append(f"metadata retrieved {source['metadata_retrieved_at']}")
+
+    return details
 
 
 def _plain_bullet_section(items: list[str]) -> str:

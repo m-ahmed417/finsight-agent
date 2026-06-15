@@ -248,25 +248,42 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert result["financial_metrics"]["periods"][1]["revenue"] == 1250000000
     assert result["financial_metrics"]["periods"][1]["free_cash_flow"] == 280000000
     assert "The Company faces intense competition" in result["filing_text"]
-    assert result["risk_factors"] == [
-        {
-            "source_type": "sec_risk_factors",
-            "form": "10-K",
-            "filing_date": "2024-11-01",
-            "accession_number": "0000320193-24-000123",
-            "source_url": (
-                "https://www.sec.gov/Archives/edgar/data/320193/"
-                "000032019324000123/aapl-20240928.htm"
-            ),
-            "source_ids": ["latest_10k"],
-            "text": (
-                "The Company faces intense competition in all markets in which it operates.\n"
-                "Supply chain disruption, component shortages, or manufacturing delays could\n"
-                "adversely affect results of operations. The Company's business also depends on\n"
-                "continued access to third-party software, services, and distribution channels."
-            ),
-        }
-    ]
+    assert len(result["risk_factors"]) == 1
+    risk_factor = result["risk_factors"][0]
+    expected_risk_text = (
+        "The Company faces intense competition in all markets in which it operates.\n"
+        "Supply chain disruption, component shortages, or manufacturing delays could\n"
+        "adversely affect results of operations. The Company's business also depends on\n"
+        "continued access to third-party software, services, and distribution channels."
+    )
+    assert {
+        "source_id": risk_factor["source_id"],
+        "source_type": risk_factor["source_type"],
+        "form": risk_factor["form"],
+        "filing_date": risk_factor["filing_date"],
+        "accession_number": risk_factor["accession_number"],
+        "source_url": risk_factor["source_url"],
+        "source_ids": risk_factor["source_ids"],
+        "section": risk_factor["section"],
+        "section_label": risk_factor["section_label"],
+        "text": risk_factor["text"],
+    } == {
+        "source_id": "latest_10k",
+        "source_type": "sec_risk_factors",
+        "form": "10-K",
+        "filing_date": "2024-11-01",
+        "accession_number": "0000320193-24-000123",
+        "source_url": (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000032019324000123/aapl-20240928.htm"
+        ),
+        "source_ids": ["latest_10k"],
+        "section": "Item 1A",
+        "section_label": "Risk Factors",
+        "text": expected_risk_text,
+    }
+    assert risk_factor["text_character_count"] == len(expected_risk_text)
+    assert datetime.fromisoformat(risk_factor["extracted_at"])
     assert result["risk_themes"] == [
         {
             "title": "Competitive pressure",
@@ -355,6 +372,12 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert len(source_ids) == len(set(source_ids))
     assert submissions_source["source_id"] == "sec_submissions"
     assert company_facts_source["source_id"] == "sec_company_facts"
+    assert submissions_source["publisher"] == "U.S. Securities and Exchange Commission"
+    assert company_facts_source["publisher"] == "U.S. Securities and Exchange Commission"
+    assert submissions_source["company_name"] == "Apple Inc."
+    assert submissions_source["ticker"] == "AAPL"
+    assert submissions_source["data_format"] == "json"
+    assert submissions_source["retrieval_method"] == "http_get"
     assert submissions_source["url"] == (
         "https://data.sec.gov/submissions/CIK0000320193.json"
     )
@@ -363,23 +386,74 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     )
     assert submissions_source["cik"] == "0000320193"
     assert datetime.fromisoformat(submissions_source["retrieved_at"])
-    assert filing_10k_source == {
+    assert company_facts_source["metric_extraction_status"] == "metrics_extracted"
+    assert company_facts_source["metric_fiscal_years"] == [2023, 2024]
+    assert company_facts_source["filing_forms_used"] == ["10-K"]
+    assert company_facts_source["xbrl_tags_used"] == [
+        "Assets",
+        "CashAndCashEquivalentsAtCarryingValue",
+        "Liabilities",
+        "LongTermDebt",
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetIncomeLoss",
+        "OperatingIncomeLoss",
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+    ]
+    assert datetime.fromisoformat(company_facts_source["retrieved_at"])
+    assert datetime.fromisoformat(company_facts_source["metric_extracted_at"])
+    assert {
+        "source_id": filing_10k_source["source_id"],
+        "source_type": filing_10k_source["source_type"],
+        "label": filing_10k_source["label"],
+        "publisher": filing_10k_source["publisher"],
+        "cik": filing_10k_source["cik"],
+        "company_name": filing_10k_source["company_name"],
+        "ticker": filing_10k_source["ticker"],
+        "form": filing_10k_source["form"],
+        "filing_date": filing_10k_source["filing_date"],
+        "report_date": filing_10k_source["report_date"],
+        "accession_number": filing_10k_source["accession_number"],
+        "accession_path": filing_10k_source["accession_path"],
+        "primary_document": filing_10k_source["primary_document"],
+        "url": filing_10k_source["url"],
+        "data_format": filing_10k_source["data_format"],
+        "metadata_source_ids": filing_10k_source["metadata_source_ids"],
+        "extraction_status": filing_10k_source["extraction_status"],
+        "extracted_sections": filing_10k_source["extracted_sections"],
+    } == {
         "source_id": "latest_10k",
         "source_type": "sec_filing",
         "label": "Latest 10-K filing",
+        "publisher": "U.S. Securities and Exchange Commission",
         "cik": "0000320193",
+        "company_name": "Apple Inc.",
+        "ticker": "AAPL",
         "form": "10-K",
         "filing_date": "2024-11-01",
         "report_date": "2024-09-28",
         "accession_number": "0000320193-24-000123",
+        "accession_path": "000032019324000123",
         "primary_document": "aapl-20240928.htm",
         "url": (
             "https://www.sec.gov/Archives/edgar/data/320193/"
             "000032019324000123/aapl-20240928.htm"
         ),
+        "data_format": "html",
+        "metadata_source_ids": ["sec_submissions"],
+        "extraction_status": "risk_factors_extracted",
+        "extracted_sections": ["Item 1A Risk Factors"],
     }
+    assert filing_10k_source["document_character_count"] == len(result["filing_text"])
+    assert filing_10k_source["risk_factor_text_character_count"] == len(
+        expected_risk_text
+    )
+    assert datetime.fromisoformat(filing_10k_source["metadata_retrieved_at"])
+    assert datetime.fromisoformat(filing_10k_source["document_retrieved_at"])
     assert filing_10q_source["source_id"] == "latest_10q"
     assert filing_10q_source["accession_number"] == "0000320193-24-000099"
+    assert filing_10q_source["metadata_source_ids"] == ["sec_submissions"]
+    assert datetime.fromisoformat(filing_10q_source["metadata_retrieved_at"])
     assert "# FinSight Research Brief: Apple Inc. (AAPL)" in result["final_report"]
     assert "## 5. Key Financial Metrics" in result["final_report"]
     assert "[sec_company_facts]" in result["final_report"]

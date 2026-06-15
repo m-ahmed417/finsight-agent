@@ -5,6 +5,22 @@ import respx
 from finsight_agent.app.services.sec_client import SECClient, SECClientError
 
 
+class ManualClock:
+    def __init__(self, start: float = 100.0) -> None:
+        self.current = start
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.current += seconds
+
+    def advance(self, seconds: float) -> None:
+        self.current += seconds
+
+
 @respx.mock
 def test_fetch_company_tickers_returns_json_mapping() -> None:
     route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
@@ -44,13 +60,14 @@ def test_fetch_company_tickers_sends_configured_user_agent() -> None:
 
 @respx.mock
 def test_fetch_company_tickers_raises_clear_error_on_http_failure() -> None:
-    respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
         return_value=httpx.Response(404, text="Not found")
     )
     client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
 
     with pytest.raises(SECClientError, match="status 404"):
         client.fetch_company_tickers()
+    assert route.call_count == 1
 
 
 @respx.mock
@@ -158,13 +175,14 @@ def test_fetch_filing_document_rejects_missing_primary_document() -> None:
 
 @respx.mock
 def test_fetch_company_submissions_raises_clear_error_on_http_failure() -> None:
-    respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
+    route = respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
         return_value=httpx.Response(500, text="SEC unavailable")
     )
     client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
 
-    with pytest.raises(SECClientError, match="status 500"):
+    with pytest.raises(SECClientError, match="status 500.*after 3 attempts"):
         client.fetch_company_submissions("320193")
+    assert route.call_count == 3
 
 
 @respx.mock
@@ -176,3 +194,251 @@ def test_fetch_company_facts_raises_clear_error_on_malformed_json() -> None:
 
     with pytest.raises(SECClientError, match="malformed JSON"):
         client.fetch_company_facts("320193")
+
+
+@respx.mock
+def test_fetch_company_submissions_retries_transient_5xx_then_succeeds() -> None:
+    route = respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
+        side_effect=[
+            httpx.Response(503, text="SEC temporarily unavailable"),
+            httpx.Response(
+                200,
+                json={
+                    "cik": "0000320193",
+                    "name": "Apple Inc.",
+                },
+            ),
+        ]
+    )
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    result = client.fetch_company_submissions("320193")
+
+    assert route.call_count == 2
+    assert result["name"] == "Apple Inc."
+
+
+@respx.mock
+def test_fetch_company_facts_retries_timeout_then_succeeds() -> None:
+    route = respx.get(
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ).mock(
+        side_effect=[
+            httpx.TimeoutException("Request timed out."),
+            httpx.Response(
+                200,
+                json={
+                    "cik": 320193,
+                    "facts": {"us-gaap": {}},
+                },
+            ),
+        ]
+    )
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    result = client.fetch_company_facts("320193")
+
+    assert route.call_count == 2
+    assert result["facts"] == {"us-gaap": {}}
+
+
+@respx.mock
+def test_fetch_company_facts_raises_clear_error_when_timeout_retries_are_exhausted() -> None:
+    route = respx.get(
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ).mock(side_effect=httpx.TimeoutException("Request timed out."))
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    with pytest.raises(SECClientError, match="after 3 attempts"):
+        client.fetch_company_facts("320193")
+    assert route.call_count == 3
+
+
+def test_sec_client_rejects_negative_max_retries() -> None:
+    with pytest.raises(ValueError, match="max_retries cannot be negative"):
+        SECClient(user_agent="FinSightTest/0.1 test@example.com", max_retries=-1)
+
+
+def test_sec_client_rejects_negative_min_request_interval() -> None:
+    with pytest.raises(
+        ValueError,
+        match="min_request_interval_seconds cannot be negative",
+    ):
+        SECClient(
+            user_agent="FinSightTest/0.1 test@example.com",
+            min_request_interval_seconds=-0.1,
+        )
+
+
+@respx.mock
+def test_sec_client_applies_request_interval_between_live_requests() -> None:
+    clock = ManualClock()
+    respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get(
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ).mock(return_value=httpx.Response(200, json={"facts": {"us-gaap": {}}}))
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        min_request_interval_seconds=0.5,
+        clock=clock.now,
+        sleep=clock.sleep,
+    )
+
+    client.fetch_company_tickers()
+    client.fetch_company_facts("320193")
+
+    assert len(clock.sleeps) == 1
+    assert clock.sleeps[0] == pytest.approx(0.5)
+
+
+@respx.mock
+def test_sec_client_rate_limit_accounts_for_elapsed_time() -> None:
+    clock = ManualClock()
+    respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
+        return_value=httpx.Response(200, json={"cik": "0000320193"})
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        min_request_interval_seconds=0.5,
+        clock=clock.now,
+        sleep=clock.sleep,
+    )
+
+    client.fetch_company_tickers()
+    clock.advance(0.3)
+    client.fetch_company_submissions("320193")
+
+    assert len(clock.sleeps) == 1
+    assert clock.sleeps[0] == pytest.approx(0.2)
+
+
+@respx.mock
+def test_fetch_company_tickers_uses_filesystem_cache(tmp_path) -> None:
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "0": {
+                    "cik_str": 320193,
+                    "ticker": "AAPL",
+                    "title": "Apple Inc.",
+                }
+            },
+        )
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    first_result = client.fetch_company_tickers()
+    second_result = client.fetch_company_tickers()
+
+    assert route.call_count == 1
+    assert first_result == second_result
+    assert any(tmp_path.iterdir())
+
+
+@respx.mock
+def test_sec_client_does_not_rate_limit_cache_hits(tmp_path) -> None:
+    clock = ManualClock()
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(200, json={"0": {"ticker": "AAPL"}})
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+        min_request_interval_seconds=1.0,
+        clock=clock.now,
+        sleep=clock.sleep,
+    )
+
+    first_result = client.fetch_company_tickers()
+    second_result = client.fetch_company_tickers()
+
+    assert route.call_count == 1
+    assert first_result == second_result
+    assert clock.sleeps == []
+
+
+@respx.mock
+def test_fetch_company_submissions_uses_normalized_cik_cache_key(tmp_path) -> None:
+    route = respx.get("https://data.sec.gov/submissions/CIK0000320193.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "cik": "0000320193",
+                "name": "Apple Inc.",
+            },
+        )
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    first_result = client.fetch_company_submissions("320193")
+    second_result = client.fetch_company_submissions("0000320193")
+
+    assert route.call_count == 1
+    assert first_result == second_result
+
+
+@respx.mock
+def test_fetch_filing_document_uses_filesystem_cache(tmp_path) -> None:
+    route = respx.get(
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019324000123/aapl-20240928.htm"
+    ).mock(return_value=httpx.Response(200, text="<html>10-K text</html>"))
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    first_result = client.fetch_filing_document(
+        cik="0000320193",
+        accession_number="0000320193-24-000123",
+        primary_document="aapl-20240928.htm",
+    )
+    second_result = client.fetch_filing_document(
+        cik="320193",
+        accession_number="000032019324000123",
+        primary_document="aapl-20240928.htm",
+    )
+
+    assert route.call_count == 1
+    assert first_result == second_result == "<html>10-K text</html>"
+
+
+@respx.mock
+def test_malformed_json_response_is_not_cached(tmp_path) -> None:
+    route = respx.get(
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ).mock(
+        side_effect=[
+            httpx.Response(200, text="not-json"),
+            httpx.Response(
+                200,
+                json={
+                    "cik": 320193,
+                    "facts": {"us-gaap": {}},
+                },
+            ),
+        ]
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    with pytest.raises(SECClientError, match="malformed JSON"):
+        client.fetch_company_facts("320193")
+    result = client.fetch_company_facts("320193")
+
+    assert route.call_count == 2
+    assert result["facts"] == {"us-gaap": {}}

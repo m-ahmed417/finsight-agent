@@ -25,6 +25,8 @@ SEC_SUBMISSIONS_SOURCE_ID = "sec_submissions"
 SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
 LATEST_10K_SOURCE_ID = "latest_10k"
 LATEST_10Q_SOURCE_ID = "latest_10q"
+SEC_PUBLISHER = "U.S. Securities and Exchange Commission"
+RISK_FACTORS_SECTION = "Item 1A Risk Factors"
 LLM_DRAFT_CITATION_PATTERN = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*)\]")
 LLM_SOURCE_GROUNDED_REPORT_FIELDS = (
     "financial_performance",
@@ -240,16 +242,28 @@ def _make_fetch_sec_data_node(sec_client: Any):
                     "source_id": SEC_SUBMISSIONS_SOURCE_ID,
                     "source_type": "sec_submissions",
                     "label": "SEC submissions",
+                    "publisher": SEC_PUBLISHER,
                     "cik": normalized_cik,
+                    "company_name": state.get("company_name"),
+                    "ticker": state.get("ticker"),
                     "url": _sec_submissions_url(normalized_cik),
+                    "data_format": "json",
+                    "retrieval_method": "http_get",
+                    "description": "SEC submissions filing metadata.",
                     "retrieved_at": retrieved_at,
                 },
                 {
                     "source_id": SEC_COMPANY_FACTS_SOURCE_ID,
                     "source_type": "sec_company_facts",
                     "label": "SEC company facts",
+                    "publisher": SEC_PUBLISHER,
                     "cik": normalized_cik,
+                    "company_name": state.get("company_name"),
+                    "ticker": state.get("ticker"),
                     "url": _sec_company_facts_url(normalized_cik),
+                    "data_format": "json",
+                    "retrieval_method": "http_get",
+                    "description": "SEC XBRL company facts.",
                     "retrieved_at": retrieved_at,
                 },
             ],
@@ -270,6 +284,14 @@ def _identify_filings(state: FinSightState) -> FinSightState:
     latest_10q = find_latest_filing(submissions, form_type="10-Q")
     latest_10k_data = latest_10k.model_dump(mode="json") if latest_10k else None
     latest_10q_data = latest_10q.model_dump(mode="json") if latest_10q else None
+    metadata_retrieved_at = (
+        _source_field(
+            state.get("sources", []),
+            SEC_SUBMISSIONS_SOURCE_ID,
+            "retrieved_at",
+        )
+        or _utc_timestamp()
+    )
 
     return {
         "latest_10k": latest_10k_data,
@@ -284,12 +306,18 @@ def _identify_filings(state: FinSightState) -> FinSightState:
                         latest_10k_data,
                         "Latest 10-K filing",
                         LATEST_10K_SOURCE_ID,
+                        metadata_retrieved_at=metadata_retrieved_at,
+                        company_name=state.get("company_name"),
+                        ticker=state.get("ticker"),
                     ),
                     _filing_source(
                         state.get("cik"),
                         latest_10q_data,
                         "Latest 10-Q filing",
                         LATEST_10Q_SOURCE_ID,
+                        metadata_retrieved_at=metadata_retrieved_at,
+                        company_name=state.get("company_name"),
+                        ticker=state.get("ticker"),
                     ),
                 )
                 if source is not None
@@ -331,11 +359,22 @@ def _make_fetch_filing_text_node(sec_client: Any):
         except Exception as exc:
             return _filing_text_unavailable_update(state, str(exc))
 
+        document_retrieved_at = _utc_timestamp()
         section = extract_risk_factors_section(filing_text)
         if section is None:
             return {
                 "filing_text": filing_text,
                 "risk_factors": [],
+                "sources": _update_source_metadata(
+                    state.get("sources", []),
+                    LATEST_10K_SOURCE_ID,
+                    {
+                        "document_retrieved_at": document_retrieved_at,
+                        "document_character_count": len(filing_text),
+                        "extraction_status": "risk_factors_not_found",
+                        "extracted_sections": [],
+                    },
+                ),
                 "warnings": [
                     *state.get("warnings", []),
                     {
@@ -361,15 +400,31 @@ def _make_fetch_filing_text_node(sec_client: Any):
             "filing_text": filing_text,
             "risk_factors": [
                 {
+                    "source_id": LATEST_10K_SOURCE_ID,
                     "source_type": "sec_risk_factors",
                     "form": latest_10k.get("form"),
                     "filing_date": latest_10k.get("filing_date"),
                     "accession_number": accession_number,
                     "source_url": source_url,
                     "source_ids": [LATEST_10K_SOURCE_ID],
+                    "section": "Item 1A",
+                    "section_label": "Risk Factors",
+                    "extracted_at": document_retrieved_at,
+                    "text_character_count": len(section.text),
                     "text": section.text,
                 }
             ],
+            "sources": _update_source_metadata(
+                state.get("sources", []),
+                LATEST_10K_SOURCE_ID,
+                {
+                    "document_retrieved_at": document_retrieved_at,
+                    "document_character_count": len(filing_text),
+                    "extraction_status": "risk_factors_extracted",
+                    "extracted_sections": [RISK_FACTORS_SECTION],
+                    "risk_factor_text_character_count": len(section.text),
+                },
+            ),
             "agent_steps": _append_step(
                 state,
                 "fetch_filing_text",
@@ -441,6 +496,11 @@ def _extract_metrics(state: FinSightState) -> FinSightState:
 
     return {
         "financial_metrics": metrics,
+        "sources": _update_source_metadata(
+            state.get("sources", []),
+            SEC_COMPANY_FACTS_SOURCE_ID,
+            _company_facts_source_updates(metrics),
+        ),
         "warnings": warnings,
         "agent_steps": _append_step(
             state,
@@ -799,6 +859,93 @@ def _known_source_ids(state: FinSightState) -> set[str]:
     return source_ids
 
 
+def _source_field(
+    sources: list[dict[str, Any]],
+    source_id: str,
+    field: str,
+) -> Any | None:
+    for source in sources:
+        if source.get("source_id") == source_id:
+            return source.get(field)
+    return None
+
+
+def _update_source_metadata(
+    sources: list[dict[str, Any]],
+    source_id: str,
+    updates: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {**source, **updates} if source.get("source_id") == source_id else {**source}
+        for source in sources
+    ]
+
+
+def _company_facts_source_updates(metrics: dict[str, Any]) -> dict[str, Any]:
+    periods = metrics.get("periods", [])
+    updates: dict[str, Any] = {
+        "metric_extracted_at": _utc_timestamp(),
+        "metric_extraction_status": (
+            "metrics_extracted" if periods else "metrics_unavailable"
+        ),
+    }
+
+    fiscal_years = sorted(
+        {
+            period["fy"]
+            for period in periods
+            if isinstance(period.get("fy"), int)
+        }
+    )
+    if fiscal_years:
+        updates["metric_fiscal_years"] = fiscal_years
+
+    xbrl_tags = _xbrl_tags_from_metric_sources(metrics)
+    if xbrl_tags:
+        updates["xbrl_tags_used"] = xbrl_tags
+
+    forms = _forms_from_metric_sources(metrics)
+    if forms:
+        updates["filing_forms_used"] = forms
+
+    return updates
+
+
+def _xbrl_tags_from_metric_sources(metrics: dict[str, Any]) -> list[str]:
+    tags: set[str] = set()
+    for source in _iter_metric_source_records(metrics):
+        tag = source.get("tag")
+        if isinstance(tag, str) and tag.strip():
+            tags.add(tag.strip())
+    return sorted(tags)
+
+
+def _forms_from_metric_sources(metrics: dict[str, Any]) -> list[str]:
+    forms: set[str] = set()
+    for source in _iter_metric_source_records(metrics):
+        form = source.get("form")
+        if isinstance(form, str) and form.strip():
+            forms.add(form.strip())
+    return sorted(forms)
+
+
+def _iter_metric_source_records(metrics: dict[str, Any]):
+    for period in metrics.get("periods", []):
+        metric_sources = period.get("metric_sources", {})
+        if not isinstance(metric_sources, dict):
+            continue
+        for source in metric_sources.values():
+            if isinstance(source, dict):
+                yield source
+                component_sources = source.get("component_sources", [])
+                if isinstance(component_sources, list):
+                    yield from (
+                        component
+                        for component in component_sources
+                        if isinstance(component, dict)
+                    )
+
+
 def _report_evidence(state: FinSightState) -> dict[str, Any]:
     return {
         "company_name": state.get("company_name"),
@@ -867,26 +1014,43 @@ def _filing_source(
     filing: dict[str, Any] | None,
     label: str,
     source_id: str,
+    *,
+    metadata_retrieved_at: str,
+    company_name: str | None,
+    ticker: str | None,
 ) -> dict[str, Any] | None:
     if cik is None or filing is None:
         return None
 
     normalized_cik = _normalize_cik(cik)
+    accession_number = filing.get("accession_number")
+    primary_document = filing.get("primary_document")
     return {
         "source_id": source_id,
         "source_type": "sec_filing",
         "label": label,
+        "publisher": SEC_PUBLISHER,
         "cik": normalized_cik,
+        "company_name": company_name,
+        "ticker": ticker,
         "form": filing.get("form"),
         "filing_date": filing.get("filing_date"),
         "report_date": filing.get("report_date"),
-        "accession_number": filing.get("accession_number"),
-        "primary_document": filing.get("primary_document"),
+        "accession_number": accession_number,
+        "accession_path": (
+            normalize_accession_number(accession_number)
+            if accession_number
+            else None
+        ),
+        "primary_document": primary_document,
         "url": _filing_document_url(
             cik=normalized_cik,
-            accession_number=filing.get("accession_number"),
-            primary_document=filing.get("primary_document"),
+            accession_number=accession_number,
+            primary_document=primary_document,
         ),
+        "data_format": "html",
+        "metadata_source_ids": [SEC_SUBMISSIONS_SOURCE_ID],
+        "metadata_retrieved_at": metadata_retrieved_at,
     }
 
 

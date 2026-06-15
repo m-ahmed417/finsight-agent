@@ -51,7 +51,11 @@ def build_company_resolver(sec_client: Any | None = None) -> CompanyResolver:
     configured_sec_client = sec_client
     if configured_sec_client is None:
         settings = get_settings()
-        configured_sec_client = SECClient(user_agent=settings.sec_user_agent)
+        configured_sec_client = SECClient(
+            user_agent=settings.sec_user_agent,
+            cache_dir=settings.sec_cache_dir or None,
+            min_request_interval_seconds=settings.sec_request_interval_seconds,
+        )
 
     try:
         return build_sec_company_resolver(configured_sec_client)

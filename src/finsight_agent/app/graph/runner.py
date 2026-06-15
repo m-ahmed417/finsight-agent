@@ -15,7 +15,11 @@ def build_research_graph_runner(
 ):
     settings = get_settings()
     configured_resolver = resolver or get_cached_company_resolver()
-    configured_sec_client = sec_client or SECClient(user_agent=settings.sec_user_agent)
+    configured_sec_client = sec_client or SECClient(
+        user_agent=settings.sec_user_agent,
+        cache_dir=settings.sec_cache_dir or None,
+        min_request_interval_seconds=settings.sec_request_interval_seconds,
+    )
     configured_llm_client = llm_client or get_llm_client(settings)
     return build_research_graph(
         resolver=configured_resolver,

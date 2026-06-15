@@ -15,6 +15,14 @@ class Settings(BaseSettings):
         default="FinSight/0.1 configured-via-env",
         validation_alias="SEC_USER_AGENT",
     )
+    sec_cache_dir: str | None = Field(
+        default=".finsight_cache/sec",
+        validation_alias="SEC_CACHE_DIR",
+    )
+    sec_request_interval_seconds: float = Field(
+        default=0.1,
+        validation_alias="SEC_REQUEST_INTERVAL_SECONDS",
+    )
     llm_provider: str = Field(default="mock", validation_alias="LLM_PROVIDER")
     llm_model: str = Field(default="mock", validation_alias="LLM_MODEL")
     openai_api_key: SecretStr | None = Field(

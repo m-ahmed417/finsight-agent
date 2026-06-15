@@ -119,6 +119,56 @@ def test_generate_research_report_includes_source_labels_and_urls() -> None:
     ) in report
 
 
+def test_generate_research_report_includes_source_metadata_details() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k={"filing_date": "2024-11-01", "accession_number": "abc"},
+        latest_10q=None,
+        warnings=[],
+        sources=[
+            {
+                "source_id": "sec_company_facts",
+                "label": "SEC company facts",
+                "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+                "metric_fiscal_years": [2023, 2024],
+                "xbrl_tags_used": ["RevenueFromContractWithCustomerExcludingAssessedTax"],
+                "retrieved_at": "2026-06-15T10:00:00+00:00",
+            },
+            {
+                "source_id": "latest_10k",
+                "label": "Latest 10-K filing",
+                "url": "https://www.sec.gov/Archives/example.htm",
+                "form": "10-K",
+                "filing_date": "2024-11-01",
+                "report_date": "2024-09-28",
+                "accession_number": "abc",
+                "primary_document": "aapl.htm",
+                "extracted_sections": ["Item 1A Risk Factors"],
+                "extraction_status": "risk_factors_extracted",
+                "document_retrieved_at": "2026-06-15T10:01:00+00:00",
+            },
+        ],
+    )
+
+    assert (
+        "- [sec_company_facts] SEC company facts: "
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json "
+        "(metric fiscal years 2023, 2024; XBRL tags used: "
+        "RevenueFromContractWithCustomerExcludingAssessedTax; "
+        "retrieved 2026-06-15T10:00:00+00:00)"
+    ) in report
+    assert (
+        "- [latest_10k] Latest 10-K filing: "
+        "https://www.sec.gov/Archives/example.htm "
+        "(10-K filed 2024-11-01; report date 2024-09-28; accession abc; "
+        "primary document aapl.htm; extracted sections: Item 1A Risk Factors; "
+        "risk factors extracted; document retrieved 2026-06-15T10:01:00+00:00)"
+    ) in report
+    assert report.count("- [latest_10k]") == 1
+
+
 def test_generate_research_report_notes_available_risk_factor_text() -> None:
     report = generate_research_report(
         company_name="Apple Inc.",
