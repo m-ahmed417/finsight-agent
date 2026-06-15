@@ -233,45 +233,48 @@ def _make_fetch_sec_data_node(sec_client: Any):
 
         normalized_cik = _normalize_cik(cik)
         retrieved_at = _utc_timestamp()
+        sources = [
+            {
+                "source_id": SEC_SUBMISSIONS_SOURCE_ID,
+                "source_type": "sec_submissions",
+                "label": "SEC submissions",
+                "publisher": SEC_PUBLISHER,
+                "cik": normalized_cik,
+                "company_name": state.get("company_name"),
+                "ticker": state.get("ticker"),
+                "url": _sec_submissions_url(normalized_cik),
+                "data_format": "json",
+                "retrieval_method": "http_get",
+                "description": "SEC submissions filing metadata.",
+                "retrieved_at": retrieved_at,
+            },
+            {
+                "source_id": SEC_COMPANY_FACTS_SOURCE_ID,
+                "source_type": "sec_company_facts",
+                "label": "SEC company facts",
+                "publisher": SEC_PUBLISHER,
+                "cik": normalized_cik,
+                "company_name": state.get("company_name"),
+                "ticker": state.get("ticker"),
+                "url": _sec_company_facts_url(normalized_cik),
+                "data_format": "json",
+                "retrieval_method": "http_get",
+                "description": "SEC XBRL company facts.",
+                "retrieved_at": retrieved_at,
+            },
+        ]
         return {
             "sec_submissions": sec_submissions,
             "company_facts": company_facts,
             "sources": [
                 *state.get("sources", []),
-                {
-                    "source_id": SEC_SUBMISSIONS_SOURCE_ID,
-                    "source_type": "sec_submissions",
-                    "label": "SEC submissions",
-                    "publisher": SEC_PUBLISHER,
-                    "cik": normalized_cik,
-                    "company_name": state.get("company_name"),
-                    "ticker": state.get("ticker"),
-                    "url": _sec_submissions_url(normalized_cik),
-                    "data_format": "json",
-                    "retrieval_method": "http_get",
-                    "description": "SEC submissions filing metadata.",
-                    "retrieved_at": retrieved_at,
-                },
-                {
-                    "source_id": SEC_COMPANY_FACTS_SOURCE_ID,
-                    "source_type": "sec_company_facts",
-                    "label": "SEC company facts",
-                    "publisher": SEC_PUBLISHER,
-                    "cik": normalized_cik,
-                    "company_name": state.get("company_name"),
-                    "ticker": state.get("ticker"),
-                    "url": _sec_company_facts_url(normalized_cik),
-                    "data_format": "json",
-                    "retrieval_method": "http_get",
-                    "description": "SEC XBRL company facts.",
-                    "retrieved_at": retrieved_at,
-                },
+                *sources,
             ],
             "agent_steps": _append_step(
                 state,
                 "fetch_sec_data",
                 "completed",
-                "Fetched SEC submissions and company facts.",
+                _fetch_sec_data_message(normalized_cik, sources),
             ),
         }
 
@@ -327,7 +330,7 @@ def _identify_filings(state: FinSightState) -> FinSightState:
             state,
             "identify_filings",
             "completed",
-            "Identified latest 10-K and 10-Q filing metadata.",
+            _identify_filings_message(latest_10k_data, latest_10q_data),
         ),
     }
 
@@ -381,13 +384,22 @@ def _make_fetch_filing_text_node(sec_client: Any):
                         "code": "risk_factors_unavailable",
                         "message": "Item 1A risk-factor section could not be extracted.",
                         "severity": "warning",
+                        "details": {
+                            "source_id": LATEST_10K_SOURCE_ID,
+                            "accession_number": accession_number,
+                            "primary_document": primary_document,
+                            "document_character_count": len(filing_text),
+                        },
                     },
                 ],
                 "agent_steps": _append_step(
                     state,
                     "fetch_filing_text",
                     "completed",
-                    "Retrieved latest 10-K but could not extract risk-factor text.",
+                    (
+                        "Retrieved latest 10-K but could not extract risk-factor text; "
+                        f"document characters: {len(filing_text)}."
+                    ),
                 ),
             }
 
@@ -429,7 +441,11 @@ def _make_fetch_filing_text_node(sec_client: Any):
                 state,
                 "fetch_filing_text",
                 "completed",
-                "Retrieved latest 10-K risk-factor text.",
+                (
+                    "Retrieved latest 10-K risk-factor text; "
+                    f"document characters: {len(filing_text)}, "
+                    f"extracted characters: {len(section.text)}."
+                ),
             ),
         }
 
@@ -506,7 +522,7 @@ def _extract_metrics(state: FinSightState) -> FinSightState:
             state,
             "extract_metrics",
             "completed",
-            "Extracted financial metrics from SEC company facts.",
+            _metrics_extraction_message(metrics),
         ),
     }
 
@@ -733,6 +749,59 @@ def _company_to_candidate(company: Any) -> dict[str, str]:
         "company_name": company.company_name,
         "cik": company.cik,
     }
+
+
+def _fetch_sec_data_message(normalized_cik: str, sources: list[dict[str, Any]]) -> str:
+    source_ids = ", ".join(source["source_id"] for source in sources)
+    return (
+        f"Fetched SEC submissions and company facts for CIK {normalized_cik}; "
+        f"recorded sources: {source_ids}."
+    )
+
+
+def _identify_filings_message(
+    latest_10k: dict[str, Any] | None,
+    latest_10q: dict[str, Any] | None,
+) -> str:
+    filing_summaries = [
+        summary
+        for summary in (
+            _filing_diagnostic_summary("latest 10-K", latest_10k),
+            _filing_diagnostic_summary("latest 10-Q", latest_10q),
+        )
+        if summary is not None
+    ]
+    if not filing_summaries:
+        return "No latest 10-K or 10-Q filing metadata was identified."
+    return "Identified " + " and ".join(filing_summaries) + "."
+
+
+def _filing_diagnostic_summary(
+    label: str,
+    filing: dict[str, Any] | None,
+) -> str | None:
+    if filing is None:
+        return None
+    accession_number = filing.get("accession_number", "unknown accession")
+    filing_date = filing.get("filing_date", "unknown filing date")
+    return f"{label} {accession_number} filed {filing_date}"
+
+
+def _metrics_extraction_message(metrics: dict[str, Any]) -> str:
+    periods = metrics.get("periods", [])
+    fiscal_years = [
+        str(period["fy"])
+        for period in periods
+        if isinstance(period.get("fy"), int)
+    ]
+    xbrl_tags = _xbrl_tags_from_metric_sources(metrics)
+    if not fiscal_years:
+        return "Financial metrics were unavailable from SEC company facts."
+    return (
+        "Extracted financial metrics from SEC company facts; "
+        f"fiscal years: {', '.join(fiscal_years)}; "
+        f"XBRL tags used: {len(xbrl_tags)}."
+    )
 
 
 def _append_step(
@@ -981,6 +1050,7 @@ def _filing_text_unavailable_update(
                 "code": "filing_text_unavailable",
                 "message": message,
                 "severity": "warning",
+                "details": {"reason": message},
             },
         ],
         "agent_steps": _append_step(

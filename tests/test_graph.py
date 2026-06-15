@@ -459,6 +459,24 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert "[sec_company_facts]" in result["final_report"]
     assert "[latest_10k]" in result["final_report"]
     assert result["compliance_status"] == "allowed"
+    step_by_name = {step["node_name"]: step for step in result["agent_steps"]}
+    assert step_by_name["fetch_sec_data"]["message"] == (
+        "Fetched SEC submissions and company facts for CIK 0000320193; "
+        "recorded sources: sec_submissions, sec_company_facts."
+    )
+    assert step_by_name["identify_filings"]["message"] == (
+        "Identified latest 10-K 0000320193-24-000123 filed 2024-11-01 and "
+        "latest 10-Q 0000320193-24-000099 filed 2024-08-02."
+    )
+    assert step_by_name["fetch_filing_text"]["message"] == (
+        "Retrieved latest 10-K risk-factor text; "
+        f"document characters: {len(result['filing_text'])}, "
+        f"extracted characters: {len(expected_risk_text)}."
+    )
+    assert step_by_name["extract_metrics"]["message"] == (
+        "Extracted financial metrics from SEC company facts; "
+        "fiscal years: 2023, 2024; XBRL tags used: 9."
+    )
     assert [step["node_name"] for step in result["agent_steps"]] == [
         "resolve_company",
         "fetch_sec_data",
@@ -593,6 +611,7 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
         "code": "filing_text_unavailable",
         "message": "Filing document unavailable",
         "severity": "warning",
+        "details": {"reason": "Filing document unavailable"},
     } in result["warnings"]
     assert {
         "node_name": "fetch_filing_text",
