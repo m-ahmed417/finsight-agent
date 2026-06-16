@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from finsight_agent.app.api.schemas import (
     AgentStep,
     ResearchError,
+    ResearchResponse,
     ResearchWarning,
     SourceMetadata,
 )
@@ -140,3 +141,25 @@ def test_research_warning_and_error_reject_blank_messages() -> None:
 
     with pytest.raises(ValidationError, match="Research error field cannot be empty"):
         ResearchError.model_validate({"code": "company_not_found", "message": " "})
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "completed", "failed"])
+def test_research_response_accepts_known_lifecycle_statuses(status: str) -> None:
+    response = ResearchResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "status": status,
+        }
+    )
+
+    assert response.status == status
+
+
+def test_research_response_rejects_unknown_lifecycle_status() -> None:
+    with pytest.raises(ValidationError, match="Input should be"):
+        ResearchResponse.model_validate(
+            {
+                "run_id": "00000000-0000-0000-0000-000000000001",
+                "status": "cancelled",
+            }
+        )

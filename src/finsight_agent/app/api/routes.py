@@ -1,12 +1,12 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from finsight_agent.app.api.dependencies import (
-    ResearchGraphRunner,
+    ResearchJobExecutor,
     get_company_resolver,
+    get_research_job_executor,
     get_research_repository,
-    get_research_graph_runner,
 )
 from finsight_agent.app.api.schemas import (
     AgentStepResponse,
@@ -18,10 +18,7 @@ from finsight_agent.app.api.schemas import (
 from finsight_agent.app.db.models import AgentStep, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunRepository
 from finsight_agent.app.services.company_resolver import CompanyResolver
-from finsight_agent.app.services.graph_result_validator import (
-    GraphResultValidationError,
-    validate_graph_result,
-)
+from finsight_agent.app.services.research_job import enqueue_research_run
 
 router = APIRouter()
 
@@ -55,28 +52,25 @@ def search_companies(
     ]
 
 
-@router.post("/research", response_model=ResearchResponse)
+@router.post(
+    "/research",
+    response_model=ResearchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def research(
     request: ResearchRequest,
-    graph_runner: ResearchGraphRunner = Depends(get_research_graph_runner),
+    background_tasks: BackgroundTasks,
     repository: ResearchRunRepository = Depends(get_research_repository),
+    research_job_executor: ResearchJobExecutor = Depends(get_research_job_executor),
 ) -> ResearchResponse:
-    raw_graph_result = graph_runner.invoke({"user_query": request.query})
-    try:
-        graph_result = validate_graph_result(raw_graph_result)
-    except GraphResultValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Graph result validation failed: {exc}",
-        ) from exc
-
-    errors = graph_result.get("errors", [])
-    run_id = uuid4()
-    run = repository.create_from_graph_result(
-        run_id=run_id,
+    run = enqueue_research_run(
         query=request.query,
-        status="failed" if errors else "completed",
-        graph_result=graph_result,
+        repository=repository,
+    )
+    background_tasks.add_task(
+        research_job_executor,
+        run_id=UUID(run.id),
+        query=request.query,
     )
 
     return _research_run_to_response(run)

@@ -6,67 +6,72 @@ import pytest
 from fastapi.testclient import TestClient
 
 from finsight_agent.app.api.dependencies import (
-    get_research_graph_runner,
+    get_research_job_executor,
     get_research_repository,
 )
 from finsight_agent.app.main import app
 
 
-class FakeGraphRunner:
-    def __init__(self, result: dict) -> None:
-        self.result = result
-        self.invocations: list[dict] = []
-
-    def invoke(self, state: dict) -> dict:
-        self.invocations.append(state)
-        return self.result
-
-
 class FakeResearchRepository:
     def __init__(self) -> None:
-        self.created_runs: list[dict] = []
+        self.pending_runs: list[dict] = []
+        self.running_run_ids: list[UUID] = []
+        self.completed_updates: list[dict] = []
+        self.failed_graph_updates: list[dict] = []
+        self.failed_updates: list[dict] = []
         self.runs: dict[UUID, SimpleNamespace] = {}
 
-    def create_from_graph_result(
+    def create_pending_run(self, *, run_id: UUID, query: str) -> SimpleNamespace:
+        self.pending_runs.append({"run_id": run_id, "query": query})
+        run = _make_run(run_id=run_id, query=query, status="queued")
+        self.runs[run_id] = run
+        return run
+
+    def mark_running(self, run_id: UUID) -> SimpleNamespace | None:
+        self.running_run_ids.append(run_id)
+        run = self.runs.get(run_id)
+        if run is None:
+            return None
+        run.status = "running"
+        return run
+
+    def mark_completed_from_graph_result(
         self,
-        *,
         run_id: UUID,
-        query: str,
-        status: str,
+        *,
         graph_result: dict,
     ) -> SimpleNamespace:
-        self.created_runs.append(
+        self.completed_updates.append({"run_id": run_id, "graph_result": graph_result})
+        return self._update_from_graph_result(
+            run_id=run_id,
+            status="completed",
+            graph_result=graph_result,
+        )
+
+    def mark_failed_from_graph_result(
+        self,
+        run_id: UUID,
+        *,
+        graph_result: dict,
+    ) -> SimpleNamespace:
+        self.failed_graph_updates.append({"run_id": run_id, "graph_result": graph_result})
+        return self._update_from_graph_result(
+            run_id=run_id,
+            status="failed",
+            graph_result=graph_result,
+        )
+
+    def mark_failed(self, run_id: UUID, *, error: str) -> SimpleNamespace:
+        self.failed_updates.append({"run_id": run_id, "error": error})
+        run = self.runs[run_id]
+        run.status = "failed"
+        run.errors_json = [
             {
-                "run_id": run_id,
-                "query": query,
-                "status": status,
-                "graph_result": graph_result,
+                "code": "research_run_failed",
+                "message": error,
+                "severity": "error",
             }
-        )
-        run = SimpleNamespace(
-            id=str(run_id),
-            query=query,
-            status=status,
-            ticker=graph_result.get("ticker"),
-            company_name=graph_result.get("company_name"),
-            compliance_status=graph_result.get("compliance_status"),
-            report_quality_status=graph_result.get("report_quality_status"),
-            final_report=graph_result.get("final_report"),
-            financial_metrics_json=graph_result.get("financial_metrics"),
-            filing_text_excerpt=(
-                graph_result.get("filing_text", "")[:2000]
-                if graph_result.get("filing_text")
-                else None
-            ),
-            risk_factors_json=graph_result.get("risk_factors", []),
-            risk_themes_json=graph_result.get("risk_themes", []),
-            research_insights_json=graph_result.get("research_insights"),
-            warnings_json=graph_result.get("warnings", []),
-            errors_json=graph_result.get("errors", []),
-            sources_json=graph_result.get("sources", []),
-            agent_steps=graph_result.get("agent_steps", []),
-        )
-        self.runs[run_id] = run
+        ]
         return run
 
     def get_by_id(self, run_id: UUID) -> SimpleNamespace | None:
@@ -88,6 +93,84 @@ class FakeResearchRepository:
             for index, step in enumerate(run.agent_steps, start=1)
         ]
 
+    def _update_from_graph_result(
+        self,
+        *,
+        run_id: UUID,
+        status: str,
+        graph_result: dict,
+    ) -> SimpleNamespace:
+        existing = self.runs[run_id]
+        run = _make_run(
+            run_id=run_id,
+            query=existing.query,
+            status=status,
+            graph_result=graph_result,
+        )
+        self.runs[run_id] = run
+        return run
+
+
+class FakeResearchJobExecutor:
+    def __init__(
+        self,
+        *,
+        repository: FakeResearchRepository,
+        graph_result: dict | None = None,
+    ) -> None:
+        self.repository = repository
+        self.graph_result = graph_result
+        self.invocations: list[dict] = []
+
+    def __call__(self, *, run_id: UUID, query: str) -> None:
+        self.invocations.append({"run_id": run_id, "query": query})
+        if self.graph_result is None:
+            return
+
+        self.repository.mark_running(run_id)
+        if self.graph_result.get("errors", []):
+            self.repository.mark_failed_from_graph_result(
+                run_id,
+                graph_result=self.graph_result,
+            )
+            return
+
+        self.repository.mark_completed_from_graph_result(
+            run_id,
+            graph_result=self.graph_result,
+        )
+
+
+def _make_run(
+    *,
+    run_id: UUID,
+    query: str,
+    status: str,
+    graph_result: dict | None = None,
+) -> SimpleNamespace:
+    result = graph_result or {}
+    return SimpleNamespace(
+        id=str(run_id),
+        query=query,
+        status=status,
+        ticker=result.get("ticker"),
+        company_name=result.get("company_name"),
+        compliance_status=result.get("compliance_status"),
+        report_quality_status=result.get("report_quality_status"),
+        final_report=result.get("final_report"),
+        financial_metrics_json=result.get("financial_metrics"),
+        filing_text_excerpt=(
+            result.get("filing_text", "")[:2000] if result.get("filing_text") else None
+        ),
+        risk_factors_json=result.get("risk_factors", []),
+        risk_themes_json=result.get("risk_themes", []),
+        research_insights_json=result.get("research_insights"),
+        warnings_json=result.get("warnings", []),
+        errors_json=result.get("errors", []),
+        sources_json=result.get("sources", []),
+        agent_steps=result.get("agent_steps", []),
+    )
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -97,72 +180,107 @@ def client() -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
-def test_post_research_returns_completed_result(client: TestClient) -> None:
+def test_post_research_queues_run_and_schedules_background_job(
+    client: TestClient,
+) -> None:
     repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "compliance_status": "allowed",
-            "report_quality_status": "passed",
-            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
-            "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
-            "filing_text": "Risk factor text from latest 10-K.",
-            "risk_factors": [{"form": "10-K", "text": "Risk factor text."}],
-            "risk_themes": [{"title": "Competitive pressure"}],
-            "research_insights": {
-                "bull_case": [{"title": "Revenue growth"}],
-                "bear_case": [{"title": "Competitive pressure"}],
-                "open_questions": [],
-            },
-            "warnings": [
-                {
-                    "code": "report_quality_warning",
-                    "message": "Report section is missing source_id citations.",
-                    "severity": "warning",
-                    "details": {"validator_code": "missing_section_citation"},
-                    "source_id": "latest_10k",
-                }
-            ],
-            "errors": [],
-            "sources": [
-                {
-                    "source_id": "sec_company_facts",
-                    "source_type": "sec_company_facts",
-                    "label": "SEC company facts",
-                    "publisher": "U.S. Securities and Exchange Commission",
-                    "cik": "0000320193",
-                    "company_name": "Apple Inc.",
-                    "ticker": "AAPL",
-                    "url": (
-                        "https://data.sec.gov/api/xbrl/companyfacts/"
-                        "CIK0000320193.json"
-                    ),
-                    "retrieved_at": "2026-06-15T10:00:00+00:00",
-                    "metric_fiscal_years": [2023, 2024],
-                    "xbrl_tags_used": [
-                        "RevenueFromContractWithCustomerExcludingAssessedTax"
-                    ],
-                    "cache_status": "hit",
-                }
-            ],
-            "agent_steps": [
-                {
-                    "node_name": "resolve_company",
-                    "status": "completed",
-                    "message": "Resolved AAPL to Apple Inc.",
-                }
-            ],
-        }
-    )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
+    job_executor = FakeResearchJobExecutor(repository=repository)
     app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
 
     response = client.post("/research", json={"query": "AAPL"})
 
+    assert response.status_code == 202
+    body = response.json()
+    run_id = UUID(body["run_id"])
+    assert body["query"] == "AAPL"
+    assert body["status"] == "queued"
+    assert body["ticker"] is None
+    assert body["company_name"] is None
+    assert body["report"] is None
+    assert body["financial_metrics"] is None
+    assert body["warnings"] == []
+    assert body["errors"] == []
+    assert body["sources"] == []
+    assert repository.pending_runs == [{"run_id": run_id, "query": "AAPL"}]
+    assert job_executor.invocations == [{"run_id": run_id, "query": "AAPL"}]
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_get_research_returns_in_progress_lifecycle_statuses(
+    client: TestClient,
+    status: str,
+) -> None:
+    repository = FakeResearchRepository()
+    run_id = uuid4()
+    repository.runs[run_id] = _make_run(run_id=run_id, query="AAPL", status=status)
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{run_id}")
+
     assert response.status_code == 200
     body = response.json()
-    assert body["run_id"]
+    assert body["run_id"] == str(run_id)
+    assert body["query"] == "AAPL"
+    assert body["status"] == status
+    assert body["ticker"] is None
+    assert body["company_name"] is None
+    assert body["report"] is None
+    assert body["financial_metrics"] is None
+    assert body["risk_factors"] == []
+    assert body["risk_themes"] == []
+    assert body["warnings"] == []
+    assert body["errors"] == []
+    assert body["sources"] == []
+
+
+def test_post_research_background_job_can_complete_run(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "compliance_status": "allowed",
+        "report_quality_status": "passed",
+        "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
+        "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
+        "filing_text": "Risk factor text from latest 10-K.",
+        "risk_factors": [{"form": "10-K", "text": "Risk factor text."}],
+        "risk_themes": [{"title": "Competitive pressure"}],
+        "research_insights": {
+            "bull_case": [{"title": "Revenue growth"}],
+            "bear_case": [{"title": "Competitive pressure"}],
+            "open_questions": [],
+        },
+        "warnings": [],
+        "errors": [],
+        "sources": [],
+        "agent_steps": [
+            {
+                "node_name": "resolve_company",
+                "status": "completed",
+                "message": "Resolved AAPL to Apple Inc.",
+            }
+        ],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+    get_response = client.get(f"/research/{run_id}")
+
+    assert post_response.status_code == 202
+    assert post_response.json()["status"] == "queued"
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert body["run_id"] == run_id
+    assert body["query"] == "AAPL"
     assert body["status"] == "completed"
     assert body["ticker"] == "AAPL"
     assert body["company_name"] == "Apple Inc."
@@ -172,192 +290,47 @@ def test_post_research_returns_completed_result(client: TestClient) -> None:
     assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
     assert body["risk_factors"] == [{"form": "10-K", "text": "Risk factor text."}]
     assert body["risk_themes"] == [{"title": "Competitive pressure"}]
-    assert body["research_insights"]["bull_case"] == [{"title": "Revenue growth"}]
+    assert body["research_insights"]["bear_case"] == [{"title": "Competitive pressure"}]
     assert body["report"] == "# FinSight Research Brief: Apple Inc. (AAPL)"
-    assert body["warnings"] == [
-        {
-            "code": "report_quality_warning",
-            "message": "Report section is missing source_id citations.",
-            "severity": "warning",
-            "details": {"validator_code": "missing_section_citation"},
-            "source_id": "latest_10k",
-        }
-    ]
-    assert body["errors"] == []
-    assert len(body["sources"]) == 1
-    source = body["sources"][0]
-    assert source["source_id"] == "sec_company_facts"
-    assert source["source_type"] == "sec_company_facts"
-    assert source["label"] == "SEC company facts"
-    assert source["company_name"] == "Apple Inc."
-    assert source["metric_fiscal_years"] == [2023, 2024]
-    assert source["xbrl_tags_used"] == [
-        "RevenueFromContractWithCustomerExcludingAssessedTax"
-    ]
-    assert source["cache_status"] == "hit"
-    assert graph_runner.invocations == [{"user_query": "AAPL"}]
-    assert repository.created_runs[0]["query"] == "AAPL"
-    assert repository.created_runs[0]["status"] == "completed"
+    assert repository.running_run_ids == [UUID(run_id)]
+    assert repository.completed_updates[0]["run_id"] == UUID(run_id)
 
 
-def test_post_research_persists_normalized_graph_result(client: TestClient) -> None:
-    repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "compliance_status": "allowed",
-            "report_quality_status": "passed",
-            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
-            "financial_metrics": {"periods": []},
-            "warnings": [
-                {
-                    "code": " metric_warning ",
-                    "message": "Revenue could not be extracted.",
-                }
-            ],
-            "errors": [],
-            "sources": [
-                {
-                    "source_id": " sec_company_facts ",
-                    "source_type": "sec_company_facts",
-                    "cache_status": "hit",
-                }
-            ],
-            "agent_steps": [
-                {
-                    "node_name": " fetch_sec_data ",
-                    "status": " completed ",
-                    "message": "Fetched SEC submissions and company facts.",
-                }
-            ],
-        }
-    )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
-    app.dependency_overrides[get_research_repository] = lambda: repository
-
-    response = client.post("/research", json={"query": "AAPL"})
-
-    assert response.status_code == 200
-    persisted_graph_result = repository.created_runs[0]["graph_result"]
-    assert persisted_graph_result["warnings"] == [
-        {
-            "code": "metric_warning",
-            "message": "Revenue could not be extracted.",
-            "severity": "warning",
-        }
-    ]
-    assert persisted_graph_result["sources"] == [
-        {
-            "source_id": "sec_company_facts",
-            "source_type": "sec_company_facts",
-            "cache_status": "hit",
-        }
-    ]
-    assert persisted_graph_result["agent_steps"] == [
-        {
-            "node_name": "fetch_sec_data",
-            "status": "completed",
-            "message": "Fetched SEC submissions and company facts.",
-        }
-    ]
-
-
-def test_post_research_rejects_invalid_graph_result_before_persistence(
+def test_post_research_background_job_can_fail_run_from_graph_errors(
     client: TestClient,
 ) -> None:
     repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "warnings": [],
-            "errors": [],
-            "sources": [{"source_id": " "}],
-            "agent_steps": [],
-        }
+    graph_result = {
+        "ticker": None,
+        "company_name": None,
+        "compliance_status": None,
+        "report_quality_status": None,
+        "financial_metrics": None,
+        "warnings": [],
+        "errors": [
+            {
+                "code": "company_not_found",
+                "message": "Could not confidently resolve the company.",
+                "severity": "error",
+            }
+        ],
+        "sources": [],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
     )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
 
-    response = client.post("/research", json={"query": "AAPL"})
+    post_response = client.post("/research", json={"query": "UNKNOWN"})
+    run_id = post_response.json()["run_id"]
+    get_response = client.get(f"/research/{run_id}")
 
-    assert response.status_code == 500
-    assert response.json()["detail"].startswith("Graph result validation failed:")
-    assert "sources" in response.json()["detail"]
-    assert repository.created_runs == []
-
-
-@pytest.mark.parametrize(
-    ("graph_result", "expected_detail_parts"),
-    [
-        ([], ["Graph result validation failed", "must be a mapping"]),
-        (
-            {"warnings": {}},
-            ["Graph result validation failed", "field 'warnings' must be a list"],
-        ),
-        (
-            {"warnings": [{"code": "metric_warning", "message": " "}]},
-            ["Graph result validation failed", "'warnings' item 0", "message"],
-        ),
-        (
-            {"errors": [{"message": "Could not confidently resolve the company."}]},
-            ["Graph result validation failed", "'errors' item 0", "code"],
-        ),
-        (
-            {"agent_steps": [{"node_name": "resolve_company", "status": " "}]},
-            ["Graph result validation failed", "'agent_steps' item 0", "status"],
-        ),
-    ],
-)
-def test_post_research_rejects_invalid_graph_contract_fields_before_persistence(
-    client: TestClient,
-    graph_result: object,
-    expected_detail_parts: list[str],
-) -> None:
-    repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(graph_result)
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
-    app.dependency_overrides[get_research_repository] = lambda: repository
-
-    response = client.post("/research", json={"query": "AAPL"})
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    for expected_part in expected_detail_parts:
-        assert expected_part in detail
-    assert repository.created_runs == []
-
-
-def test_post_research_returns_failed_result_when_graph_has_errors(
-    client: TestClient,
-) -> None:
-    repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": None,
-            "company_name": None,
-            "compliance_status": None,
-            "report_quality_status": None,
-            "financial_metrics": None,
-            "warnings": [],
-            "errors": [
-                {
-                    "code": "company_not_found",
-                    "message": "Could not confidently resolve the company.",
-                    "severity": "error",
-                }
-            ],
-            "sources": [],
-        }
-    )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
-    app.dependency_overrides[get_research_repository] = lambda: repository
-
-    response = client.post("/research", json={"query": "UNKNOWN"})
-
-    assert response.status_code == 200
-    body = response.json()
+    assert post_response.status_code == 202
+    assert post_response.json()["status"] == "queued"
+    assert get_response.status_code == 200
+    body = get_response.json()
     assert body["status"] == "failed"
     assert body["ticker"] is None
     assert body["company_name"] is None
@@ -365,12 +338,10 @@ def test_post_research_returns_failed_result_when_graph_has_errors(
     assert body["report_quality_status"] is None
     assert body["financial_metrics"] is None
     assert body["errors"][0]["code"] == "company_not_found"
-    assert repository.created_runs[0]["status"] == "failed"
+    assert repository.failed_graph_updates[0]["run_id"] == UUID(run_id)
 
 
 def test_post_research_rejects_empty_query(client: TestClient) -> None:
-    graph_runner = FakeGraphRunner({})
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: FakeResearchRepository()
 
     response = client.post("/research", json={"query": "   "})
@@ -379,8 +350,6 @@ def test_post_research_rejects_empty_query(client: TestClient) -> None:
 
 
 def test_post_research_rejects_missing_query(client: TestClient) -> None:
-    graph_runner = FakeGraphRunner({})
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: FakeResearchRepository()
 
     response = client.post("/research", json={})
@@ -388,112 +357,62 @@ def test_post_research_rejects_missing_query(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_get_research_returns_stored_run(client: TestClient) -> None:
-    repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "compliance_status": "needs_rewrite",
-            "report_quality_status": "warning",
-            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
-            "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
-            "filing_text": "Risk factor text from latest 10-K.",
-            "risk_factors": [{"form": "10-K", "text": "Risk factor text."}],
-            "risk_themes": [{"title": "Competitive pressure"}],
-            "research_insights": {
-                "bull_case": [{"title": "Revenue growth"}],
-                "bear_case": [{"title": "Competitive pressure"}],
-                "open_questions": [],
-            },
-            "warnings": [],
-            "errors": [],
-            "sources": [],
-            "agent_steps": [
-                {
-                    "node_name": "resolve_company",
-                    "status": "completed",
-                    "message": "Resolved AAPL to Apple Inc.",
-                }
-            ],
-        }
-    )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
-    app.dependency_overrides[get_research_repository] = lambda: repository
-
-    post_response = client.post("/research", json={"query": "AAPL"})
-    run_id = post_response.json()["run_id"]
-
-    get_response = client.get(f"/research/{run_id}")
-
-    assert get_response.status_code == 200
-    body = get_response.json()
-    assert body["run_id"] == run_id
-    assert body["query"] == "AAPL"
-    assert body["status"] == "completed"
-    assert body["ticker"] == "AAPL"
-    assert body["compliance_status"] == "needs_rewrite"
-    assert body["report_quality_status"] == "warning"
-    assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
-    assert body["risk_themes"] == [{"title": "Competitive pressure"}]
-    assert body["research_insights"]["bear_case"] == [{"title": "Competitive pressure"}]
-
-
 def test_get_research_preserves_typed_output_metadata_from_stored_run(
     client: TestClient,
 ) -> None:
     repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "compliance_status": "allowed",
-            "report_quality_status": "warning",
-            "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
-            "financial_metrics": {"periods": []},
-            "warnings": [
-                {
-                    "code": "report_quality_warning",
-                    "message": "Report quality validation completed with warnings.",
-                    "details": {"validator_code": "weak_section"},
-                    "source_id": "latest_10k",
-                }
-            ],
-            "errors": [],
-            "sources": [
-                {
-                    "source_id": "latest_10k",
-                    "source_type": "sec_filing",
-                    "label": "Latest 10-K filing",
-                    "publisher": "U.S. Securities and Exchange Commission",
-                    "cik": "0000320193",
-                    "company_name": "Apple Inc.",
-                    "ticker": "AAPL",
-                    "url": "https://www.sec.gov/Archives/example.htm",
-                    "form": "10-K",
-                    "filing_date": "2024-11-01",
-                    "report_date": "2024-09-28",
-                    "accession_number": "0000320193-24-000123",
-                    "accession_path": "000032019324000123",
-                    "primary_document": "aapl-20240928.htm",
-                    "metadata_source_ids": ["sec_submissions"],
-                    "document_retrieved_at": "2026-06-15T10:01:00+00:00",
-                    "document_character_count": 12345,
-                    "extraction_status": "risk_factors_extracted",
-                    "extracted_sections": ["Item 1A Risk Factors"],
-                    "risk_factor_text_character_count": 1500,
-                    "cache_status": "hit",
-                }
-            ],
-            "agent_steps": [],
-        }
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "compliance_status": "allowed",
+        "report_quality_status": "warning",
+        "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
+        "financial_metrics": {"periods": []},
+        "warnings": [
+            {
+                "code": "report_quality_warning",
+                "message": "Report quality validation completed with warnings.",
+                "details": {"validator_code": "weak_section"},
+                "source_id": "latest_10k",
+            }
+        ],
+        "errors": [],
+        "sources": [
+            {
+                "source_id": "latest_10k",
+                "source_type": "sec_filing",
+                "label": "Latest 10-K filing",
+                "publisher": "U.S. Securities and Exchange Commission",
+                "cik": "0000320193",
+                "company_name": "Apple Inc.",
+                "ticker": "AAPL",
+                "url": "https://www.sec.gov/Archives/example.htm",
+                "form": "10-K",
+                "filing_date": "2024-11-01",
+                "report_date": "2024-09-28",
+                "accession_number": "0000320193-24-000123",
+                "accession_path": "000032019324000123",
+                "primary_document": "aapl-20240928.htm",
+                "metadata_source_ids": ["sec_submissions"],
+                "document_retrieved_at": "2026-06-15T10:01:00+00:00",
+                "document_character_count": 12345,
+                "extraction_status": "risk_factors_extracted",
+                "extracted_sections": ["Item 1A Risk Factors"],
+                "risk_factor_text_character_count": 1500,
+                "cache_status": "hit",
+            }
+        ],
+        "agent_steps": [],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
     )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
 
     post_response = client.post("/research", json={"query": "AAPL"})
     run_id = post_response.json()["run_id"]
-
     get_response = client.get(f"/research/{run_id}")
 
     assert get_response.status_code == 200
@@ -522,33 +441,37 @@ def test_research_response_contract_defaults_diagnostic_severities(
     client: TestClient,
 ) -> None:
     repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": None,
-            "company_name": None,
-            "compliance_status": None,
-            "report_quality_status": None,
-            "financial_metrics": None,
-            "warnings": [
-                {
-                    "code": "metric_warning",
-                    "message": "Revenue could not be extracted.",
-                }
-            ],
-            "errors": [
-                {
-                    "code": "company_not_found",
-                    "message": "Could not confidently resolve the company.",
-                }
-            ],
-            "sources": [{"source_id": "sec_submissions"}],
-            "agent_steps": [],
-        }
+    graph_result = {
+        "ticker": None,
+        "company_name": None,
+        "compliance_status": None,
+        "report_quality_status": None,
+        "financial_metrics": None,
+        "warnings": [
+            {
+                "code": "metric_warning",
+                "message": "Revenue could not be extracted.",
+            }
+        ],
+        "errors": [
+            {
+                "code": "company_not_found",
+                "message": "Could not confidently resolve the company.",
+            }
+        ],
+        "sources": [{"source_id": "sec_submissions"}],
+        "agent_steps": [],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
     )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
 
-    response = client.post("/research", json={"query": "UNKNOWN"})
+    post_response = client.post("/research", json={"query": "UNKNOWN"})
+    run_id = post_response.json()["run_id"]
+    response = client.get(f"/research/{run_id}")
 
     assert response.status_code == 200
     body = response.json()
@@ -574,34 +497,35 @@ def test_research_response_contract_defaults_diagnostic_severities(
 
 def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
     repository = FakeResearchRepository()
-    graph_runner = FakeGraphRunner(
-        {
-            "ticker": "AAPL",
-            "company_name": "Apple Inc.",
-            "financial_metrics": {"periods": []},
-            "warnings": [],
-            "errors": [],
-            "sources": [],
-            "agent_steps": [
-                {
-                    "node_name": "resolve_company",
-                    "status": "completed",
-                    "message": "Resolved AAPL to Apple Inc.",
-                },
-                {
-                    "node_name": "fetch_sec_data",
-                    "status": "completed",
-                    "message": "Fetched SEC submissions and company facts.",
-                },
-            ],
-        }
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "financial_metrics": {"periods": []},
+        "warnings": [],
+        "errors": [],
+        "sources": [],
+        "agent_steps": [
+            {
+                "node_name": "resolve_company",
+                "status": "completed",
+                "message": "Resolved AAPL to Apple Inc.",
+            },
+            {
+                "node_name": "fetch_sec_data",
+                "status": "completed",
+                "message": "Fetched SEC submissions and company facts.",
+            },
+        ],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
     )
-    app.dependency_overrides[get_research_graph_runner] = lambda: graph_runner
     app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
 
     post_response = client.post("/research", json={"query": "AAPL"})
     run_id = post_response.json()["run_id"]
-
     response = client.get(f"/research/{run_id}/steps")
 
     assert response.status_code == 200
@@ -632,10 +556,21 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     openapi = response.json()
     schemas = openapi["components"]["schemas"]
     research_properties = schemas["ResearchResponse"]["properties"]
+    post_response_schema = openapi["paths"]["/research"]["post"]["responses"]["202"][
+        "content"
+    ]["application/json"]["schema"]
     steps_response_schema = openapi["paths"]["/research/{run_id}/steps"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
 
+    assert post_response_schema["$ref"] == "#/components/schemas/ResearchResponse"
+    assert research_properties["status"]["enum"] == [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+    ]
+    assert "polling" in research_properties["status"]["description"].lower()
     assert research_properties["warnings"]["items"]["$ref"] == (
         "#/components/schemas/ResearchWarning"
     )

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -140,10 +140,18 @@ class ResearchError(BaseModel):
         return text
 
 
+ResearchStatus = Literal["queued", "running", "completed", "failed"]
+
+
 class ResearchResponse(BaseModel):
     run_id: UUID
     query: str | None = None
-    status: str
+    status: ResearchStatus = Field(
+        description=(
+            "Lifecycle status for polling research runs: queued, running, "
+            "completed, or failed."
+        )
+    )
     ticker: str | None = None
     company_name: str | None = None
     compliance_status: str | None = None
