@@ -18,6 +18,7 @@ def build_research_graph_runner(
     configured_sec_client = sec_client or SECClient(
         user_agent=settings.sec_user_agent,
         cache_dir=settings.sec_cache_dir or None,
+        cache_ttl_seconds=settings.sec_cache_ttl_seconds,
         min_request_interval_seconds=settings.sec_request_interval_seconds,
     )
     configured_llm_client = llm_client or get_llm_client(settings)

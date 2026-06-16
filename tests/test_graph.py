@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from finsight_agent.app.graph.builder import (
     _compliance_check,
@@ -48,6 +49,65 @@ class FilingDocumentFailingSECClient(FakeSECClient):
         primary_document: str,
     ) -> str:
         raise RuntimeError("Filing document unavailable")
+
+
+class CacheMetadataSECClient(FakeSECClient):
+    def fetch_company_submissions_with_metadata(self, cik: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            data=self.submissions,
+            metadata=SimpleNamespace(
+                url="https://data.sec.gov/submissions/CIK0000320193.json",
+                cache_key="company_submissions:0000320193",
+                cache_status="miss",
+                cache_age_seconds=0.25,
+                cache_ttl_seconds=86400.0,
+                cache_expires_at="2026-06-17T10:00:00+00:00",
+                cache_stale=False,
+            ),
+        )
+
+    def fetch_company_facts_with_metadata(self, cik: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            data=self.company_facts,
+            metadata=SimpleNamespace(
+                url=(
+                    "https://data.sec.gov/api/xbrl/companyfacts/"
+                    "CIK0000320193.json"
+                ),
+                cache_key="company_facts:0000320193",
+                cache_status="hit",
+                cache_age_seconds=120.5,
+                cache_ttl_seconds=21600.0,
+                cache_expires_at="2026-06-16T16:00:00+00:00",
+                cache_stale=False,
+            ),
+        )
+
+    def fetch_filing_document_with_metadata(
+        self,
+        *,
+        cik: str,
+        accession_number: str,
+        primary_document: str,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            data=(FIXTURES_DIR / "sample_10k_excerpt.txt").read_text(),
+            metadata=SimpleNamespace(
+                url=(
+                    "https://www.sec.gov/Archives/edgar/data/320193/"
+                    "000032019324000123/aapl-20240928.htm"
+                ),
+                cache_key=(
+                    "filing_document:0000320193:"
+                    "000032019324000123:aapl-20240928.htm"
+                ),
+                cache_status="miss",
+                cache_age_seconds=0.5,
+                cache_ttl_seconds=604800.0,
+                cache_expires_at="2026-06-23T10:00:00+00:00",
+                cache_stale=False,
+            ),
+        )
 
 
 class FakeLLMClient:
@@ -492,6 +552,51 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     ]
     assert all(step["status"] == "completed" for step in result["agent_steps"])
     assert result["errors"] == []
+
+
+def test_research_graph_records_sec_cache_metadata_when_available() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = CacheMetadataSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(resolver=resolver, sec_client=sec_client)
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    submissions_source = source_by_type(result["sources"], "sec_submissions")
+    company_facts_source = source_by_type(result["sources"], "sec_company_facts")
+    filing_10k_source = next(
+        source
+        for source in result["sources"]
+        if source["source_type"] == "sec_filing" and source["form"] == "10-K"
+    )
+    assert submissions_source["cache_status"] == "miss"
+    assert submissions_source["cache_key"] == "company_submissions:0000320193"
+    assert submissions_source["cache_age_seconds"] == 0.25
+    assert submissions_source["cache_ttl_seconds"] == 86400.0
+    assert submissions_source["cache_expires_at"] == "2026-06-17T10:00:00+00:00"
+    assert submissions_source["cache_stale"] is False
+    assert company_facts_source["cache_status"] == "hit"
+    assert company_facts_source["cache_key"] == "company_facts:0000320193"
+    assert company_facts_source["cache_age_seconds"] == 120.5
+    assert company_facts_source["cache_ttl_seconds"] == 21600.0
+    assert company_facts_source["cache_expires_at"] == "2026-06-16T16:00:00+00:00"
+    assert company_facts_source["cache_stale"] is False
+    assert filing_10k_source["document_cache_status"] == "miss"
+    assert filing_10k_source["document_cache_key"] == (
+        "filing_document:0000320193:000032019324000123:aapl-20240928.htm"
+    )
+    assert filing_10k_source["document_cache_age_seconds"] == 0.5
+    assert filing_10k_source["document_cache_ttl_seconds"] == 604800.0
+    assert filing_10k_source["document_cache_expires_at"] == (
+        "2026-06-23T10:00:00+00:00"
+    )
+    assert filing_10k_source["document_cache_stale"] is False
 
 
 def test_research_graph_stops_when_company_is_not_found() -> None:

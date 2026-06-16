@@ -33,6 +33,20 @@ def test_source_metadata_preserves_rich_sec_provenance() -> None:
             "extracted_sections": ["Item 1A Risk Factors"],
             "risk_factor_text_character_count": 1500,
             "cache_status": "hit",
+            "cache_key": "company_submissions:0000320193",
+            "cache_age_seconds": 120.5,
+            "cache_ttl_seconds": 86400.0,
+            "cache_expires_at": "2026-06-17T10:00:00+00:00",
+            "cache_stale": False,
+            "document_cache_status": "miss",
+            "document_cache_key": (
+                "filing_document:0000320193:"
+                "000032019324000123:aapl-20240928.htm"
+            ),
+            "document_cache_age_seconds": 0.25,
+            "document_cache_ttl_seconds": 604800.0,
+            "document_cache_expires_at": "2026-06-23T10:00:00+00:00",
+            "document_cache_stale": False,
         }
     )
 
@@ -40,7 +54,31 @@ def test_source_metadata_preserves_rich_sec_provenance() -> None:
     assert source.form == "10-K"
     assert source.metadata_source_ids == ["sec_submissions"]
     assert source.extracted_sections == ["Item 1A Risk Factors"]
-    assert source.model_dump()["cache_status"] == "hit"
+    assert source.cache_status == "hit"
+    assert source.cache_age_seconds == 120.5
+    assert source.cache_stale is False
+    assert source.document_cache_status == "miss"
+    assert source.document_cache_age_seconds == 0.25
+    assert source.document_cache_stale is False
+
+
+def test_source_metadata_defines_cache_diagnostic_fields() -> None:
+    expected_fields = {
+        "cache_status",
+        "cache_key",
+        "cache_age_seconds",
+        "cache_ttl_seconds",
+        "cache_expires_at",
+        "cache_stale",
+        "document_cache_status",
+        "document_cache_key",
+        "document_cache_age_seconds",
+        "document_cache_ttl_seconds",
+        "document_cache_expires_at",
+        "document_cache_stale",
+    }
+
+    assert expected_fields.issubset(SourceMetadata.model_fields)
 
 
 def test_source_metadata_rejects_blank_source_id() -> None:

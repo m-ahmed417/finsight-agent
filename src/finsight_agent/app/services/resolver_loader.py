@@ -54,6 +54,7 @@ def build_company_resolver(sec_client: Any | None = None) -> CompanyResolver:
         configured_sec_client = SECClient(
             user_agent=settings.sec_user_agent,
             cache_dir=settings.sec_cache_dir or None,
+            cache_ttl_seconds=settings.sec_cache_ttl_seconds,
             min_request_interval_seconds=settings.sec_request_interval_seconds,
         )
 

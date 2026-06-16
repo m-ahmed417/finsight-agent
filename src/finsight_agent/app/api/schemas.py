@@ -61,6 +61,18 @@ class SourceMetadata(BaseModel):
     metric_fiscal_years: list[int] | None = None
     xbrl_tags_used: list[str] | None = None
     filing_forms_used: list[str] | None = None
+    cache_status: str | None = None
+    cache_key: str | None = None
+    cache_age_seconds: float | None = None
+    cache_ttl_seconds: float | None = None
+    cache_expires_at: str | None = None
+    cache_stale: bool | None = None
+    document_cache_status: str | None = None
+    document_cache_key: str | None = None
+    document_cache_age_seconds: float | None = None
+    document_cache_ttl_seconds: float | None = None
+    document_cache_expires_at: str | None = None
+    document_cache_stale: bool | None = None
 
     model_config = ConfigDict(extra="allow")
 

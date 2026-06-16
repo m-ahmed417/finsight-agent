@@ -650,6 +650,21 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     )
     assert schemas["AgentStepResponse"]["properties"]["node_name"]["type"] == "string"
     assert schemas["AgentStepResponse"]["properties"]["status"]["type"] == "string"
+    source_properties = schemas["SourceMetadata"]["properties"]
+    assert {
+        "cache_status",
+        "cache_key",
+        "cache_age_seconds",
+        "cache_ttl_seconds",
+        "cache_expires_at",
+        "cache_stale",
+        "document_cache_status",
+        "document_cache_key",
+        "document_cache_age_seconds",
+        "document_cache_ttl_seconds",
+        "document_cache_expires_at",
+        "document_cache_stale",
+    }.issubset(source_properties)
     assert {
         "SourceMetadata",
         "ResearchWarning",

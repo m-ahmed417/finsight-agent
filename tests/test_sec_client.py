@@ -1,3 +1,5 @@
+import os
+
 import httpx
 import pytest
 import respx
@@ -270,6 +272,14 @@ def test_sec_client_rejects_negative_min_request_interval() -> None:
         )
 
 
+def test_sec_client_rejects_negative_cache_ttl() -> None:
+    with pytest.raises(ValueError, match="cache_ttl_seconds cannot be negative"):
+        SECClient(
+            user_agent="FinSightTest/0.1 test@example.com",
+            cache_ttl_seconds=-1,
+        )
+
+
 @respx.mock
 def test_sec_client_applies_request_interval_between_live_requests() -> None:
     clock = ManualClock()
@@ -342,6 +352,138 @@ def test_fetch_company_tickers_uses_filesystem_cache(tmp_path) -> None:
     assert route.call_count == 1
     assert first_result == second_result
     assert any(tmp_path.iterdir())
+
+
+@respx.mock
+def test_fetch_company_tickers_with_metadata_reports_cache_miss_and_hit(
+    tmp_path,
+) -> None:
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(200, json={"0": {"ticker": "AAPL"}})
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    first_result = client.fetch_company_tickers_with_metadata()
+    second_result = client.fetch_company_tickers_with_metadata()
+
+    assert route.call_count == 1
+    assert first_result.data == {"0": {"ticker": "AAPL"}}
+    assert second_result.data == first_result.data
+    assert first_result.metadata.cache_status == "miss"
+    assert second_result.metadata.cache_status == "hit"
+    assert first_result.metadata.url == SECClient.COMPANY_TICKERS_URL
+    assert second_result.metadata.url == SECClient.COMPANY_TICKERS_URL
+
+
+@respx.mock
+def test_fetch_company_tickers_with_metadata_reports_fresh_cache_age_and_expiry(
+    tmp_path,
+) -> None:
+    clock = ManualClock(start=100.0)
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        return_value=httpx.Response(200, json={"0": {"ticker": "AAPL"}})
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+        cache_ttl_seconds=60.0,
+        wall_clock=clock.now,
+    )
+
+    client.fetch_company_tickers_with_metadata()
+    cache_path = next(tmp_path.iterdir())
+    os.utime(cache_path, (90.0, 90.0))
+
+    result = client.fetch_company_tickers_with_metadata()
+
+    assert route.call_count == 1
+    assert result.metadata.cache_status == "hit"
+    assert result.metadata.cache_age_seconds == pytest.approx(10.0)
+    assert result.metadata.cache_ttl_seconds == 60.0
+    assert result.metadata.cache_expires_at == "1970-01-01T00:02:30+00:00"
+    assert result.metadata.cache_stale is False
+
+
+@respx.mock
+def test_fetch_company_tickers_with_metadata_refetches_stale_cache(
+    tmp_path,
+) -> None:
+    clock = ManualClock(start=100.0)
+    route = respx.get("https://www.sec.gov/files/company_tickers.json").mock(
+        side_effect=[
+            httpx.Response(200, json={"0": {"ticker": "AAPL"}}),
+            httpx.Response(200, json={"0": {"ticker": "MSFT"}}),
+        ]
+    )
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+        cache_ttl_seconds=60.0,
+        wall_clock=clock.now,
+    )
+
+    client.fetch_company_tickers_with_metadata()
+    cache_path = next(tmp_path.iterdir())
+    os.utime(cache_path, (20.0, 20.0))
+
+    result = client.fetch_company_tickers_with_metadata()
+
+    assert route.call_count == 2
+    assert result.data == {"0": {"ticker": "MSFT"}}
+    assert result.metadata.cache_status == "miss"
+    assert result.metadata.cache_ttl_seconds == 60.0
+    assert result.metadata.cache_stale is False
+
+
+@respx.mock
+def test_fetch_company_facts_with_metadata_reports_cache_disabled() -> None:
+    route = respx.get(
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    ).mock(return_value=httpx.Response(200, json={"facts": {"us-gaap": {}}}))
+    client = SECClient(user_agent="FinSightTest/0.1 test@example.com")
+
+    result = client.fetch_company_facts_with_metadata("320193")
+
+    assert route.call_count == 1
+    assert result.data == {"facts": {"us-gaap": {}}}
+    assert result.metadata.cache_status == "disabled"
+    assert result.metadata.url == (
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json"
+    )
+
+
+@respx.mock
+def test_fetch_filing_document_with_metadata_reports_cache_miss_and_hit(
+    tmp_path,
+) -> None:
+    route = respx.get(
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019324000123/aapl-20240928.htm"
+    ).mock(return_value=httpx.Response(200, text="<html>10-K text</html>"))
+    client = SECClient(
+        user_agent="FinSightTest/0.1 test@example.com",
+        cache_dir=tmp_path,
+    )
+
+    first_result = client.fetch_filing_document_with_metadata(
+        cik="0000320193",
+        accession_number="0000320193-24-000123",
+        primary_document="aapl-20240928.htm",
+    )
+    second_result = client.fetch_filing_document_with_metadata(
+        cik="320193",
+        accession_number="000032019324000123",
+        primary_document="aapl-20240928.htm",
+    )
+
+    assert route.call_count == 1
+    assert first_result.data == "<html>10-K text</html>"
+    assert second_result.data == first_result.data
+    assert first_result.metadata.cache_status == "miss"
+    assert second_result.metadata.cache_status == "hit"
 
 
 @respx.mock

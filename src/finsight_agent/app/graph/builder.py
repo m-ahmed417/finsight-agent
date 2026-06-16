@@ -27,6 +27,14 @@ LATEST_10K_SOURCE_ID = "latest_10k"
 LATEST_10Q_SOURCE_ID = "latest_10q"
 SEC_PUBLISHER = "U.S. Securities and Exchange Commission"
 RISK_FACTORS_SECTION = "Item 1A Risk Factors"
+CACHE_METADATA_FIELDS = (
+    "cache_status",
+    "cache_key",
+    "cache_age_seconds",
+    "cache_ttl_seconds",
+    "cache_expires_at",
+    "cache_stale",
+)
 LLM_DRAFT_CITATION_PATTERN = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*)\]")
 LLM_SOURCE_GROUNDED_REPORT_FIELDS = (
     "financial_performance",
@@ -211,8 +219,22 @@ def _make_fetch_sec_data_node(sec_client: Any):
             }
 
         try:
-            sec_submissions = sec_client.fetch_company_submissions(cik)
-            company_facts = sec_client.fetch_company_facts(cik)
+            sec_submissions, submissions_metadata = (
+                _call_sec_client_with_optional_metadata(
+                    sec_client,
+                    "fetch_company_submissions_with_metadata",
+                    "fetch_company_submissions",
+                    cik,
+                )
+            )
+            company_facts, company_facts_metadata = (
+                _call_sec_client_with_optional_metadata(
+                    sec_client,
+                    "fetch_company_facts_with_metadata",
+                    "fetch_company_facts",
+                    cik,
+                )
+            )
         except Exception as exc:
             message = str(exc)
             return {
@@ -247,6 +269,7 @@ def _make_fetch_sec_data_node(sec_client: Any):
                 "retrieval_method": "http_get",
                 "description": "SEC submissions filing metadata.",
                 "retrieved_at": retrieved_at,
+                **_cache_source_fields(submissions_metadata),
             },
             {
                 "source_id": SEC_COMPANY_FACTS_SOURCE_ID,
@@ -261,6 +284,7 @@ def _make_fetch_sec_data_node(sec_client: Any):
                 "retrieval_method": "http_get",
                 "description": "SEC XBRL company facts.",
                 "retrieved_at": retrieved_at,
+                **_cache_source_fields(company_facts_metadata),
             },
         ]
         return {
@@ -354,7 +378,10 @@ def _make_fetch_filing_text_node(sec_client: Any):
             )
 
         try:
-            filing_text = sec_client.fetch_filing_document(
+            filing_text, document_metadata = _call_sec_client_with_optional_metadata(
+                sec_client,
+                "fetch_filing_document_with_metadata",
+                "fetch_filing_document",
                 cik=cik,
                 accession_number=accession_number,
                 primary_document=primary_document,
@@ -376,6 +403,7 @@ def _make_fetch_filing_text_node(sec_client: Any):
                         "document_character_count": len(filing_text),
                         "extraction_status": "risk_factors_not_found",
                         "extracted_sections": [],
+                        **_document_cache_source_fields(document_metadata),
                     },
                 ),
                 "warnings": [
@@ -435,6 +463,7 @@ def _make_fetch_filing_text_node(sec_client: Any):
                     "extraction_status": "risk_factors_extracted",
                     "extracted_sections": [RISK_FACTORS_SECTION],
                     "risk_factor_text_character_count": len(section.text),
+                    **_document_cache_source_fields(document_metadata),
                 },
             ),
             "agent_steps": _append_step(
@@ -748,6 +777,75 @@ def _company_to_candidate(company: Any) -> dict[str, str]:
         "ticker": company.ticker,
         "company_name": company.company_name,
         "cik": company.cik,
+    }
+
+
+def _call_sec_client_with_optional_metadata(
+    sec_client: Any,
+    metadata_method_name: str,
+    fallback_method_name: str,
+    *args: Any,
+    **kwargs: Any,
+) -> tuple[Any, dict[str, Any]]:
+    metadata_method = getattr(sec_client, metadata_method_name, None)
+    if callable(metadata_method):
+        result = metadata_method(*args, **kwargs)
+    else:
+        result = getattr(sec_client, fallback_method_name)(*args, **kwargs)
+
+    return _sec_client_result_data_and_metadata(result)
+
+
+def _sec_client_result_data_and_metadata(result: Any) -> tuple[Any, dict[str, Any]]:
+    if not (hasattr(result, "data") and hasattr(result, "metadata")):
+        return result, {}
+
+    return result.data, _sec_response_metadata_to_dict(result.metadata)
+
+
+def _sec_response_metadata_to_dict(metadata: Any) -> dict[str, Any]:
+    if metadata is None:
+        return {}
+    if isinstance(metadata, dict):
+        raw_metadata = metadata
+    else:
+        raw_metadata = {
+            "url": getattr(metadata, "url", None),
+            **{
+                field: getattr(metadata, field, None)
+                for field in CACHE_METADATA_FIELDS
+            },
+        }
+
+    return {
+        key: value
+        for key, value in raw_metadata.items()
+        if value is not None
+    }
+
+
+def _cache_source_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    return _selected_metadata_fields(metadata, CACHE_METADATA_FIELDS)
+
+
+def _document_cache_source_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        f"document_{field}": value
+        for field, value in _selected_metadata_fields(
+            metadata,
+            CACHE_METADATA_FIELDS,
+        ).items()
+    }
+
+
+def _selected_metadata_fields(
+    metadata: dict[str, Any],
+    field_names: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        field_name: metadata[field_name]
+        for field_name in field_names
+        if metadata.get(field_name) is not None
     }
 
 

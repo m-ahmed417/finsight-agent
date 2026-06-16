@@ -105,13 +105,17 @@ def test_get_cached_company_resolver_reuses_loaded_resolver(monkeypatch) -> None
         lambda: SimpleNamespace(
             sec_user_agent="FinSightTest/0.1 test@example.com",
             sec_cache_dir=".tmp/sec-cache",
+            sec_cache_ttl_seconds=3600.0,
             sec_request_interval_seconds=0.25,
         ),
     )
     monkeypatch.setattr(
         resolver_loader,
         "SECClient",
-        lambda user_agent, cache_dir=None, min_request_interval_seconds=0.0: sec_client,
+        lambda user_agent,
+        cache_dir=None,
+        cache_ttl_seconds=None,
+        min_request_interval_seconds=0.0: sec_client,
     )
     get_cached_company_resolver.cache_clear()
 
@@ -132,11 +136,13 @@ def test_build_company_resolver_passes_sec_settings(monkeypatch) -> None:
             self,
             user_agent: str,
             cache_dir: str | None = None,
+            cache_ttl_seconds: float | None = None,
             min_request_interval_seconds: float = 0.0,
         ) -> None:
             super().__init__(load_fixture("sec_company_tickers.json"))
             captured["user_agent"] = user_agent
             captured["cache_dir"] = cache_dir
+            captured["cache_ttl_seconds"] = cache_ttl_seconds
             captured["min_request_interval_seconds"] = min_request_interval_seconds
 
     monkeypatch.setattr(
@@ -145,6 +151,7 @@ def test_build_company_resolver_passes_sec_settings(monkeypatch) -> None:
         lambda: SimpleNamespace(
             sec_user_agent="FinSightTest/0.1 test@example.com",
             sec_cache_dir=".tmp/sec-cache",
+            sec_cache_ttl_seconds=3600.0,
             sec_request_interval_seconds=0.25,
         ),
     )
@@ -156,6 +163,7 @@ def test_build_company_resolver_passes_sec_settings(monkeypatch) -> None:
     assert captured == {
         "user_agent": "FinSightTest/0.1 test@example.com",
         "cache_dir": ".tmp/sec-cache",
+        "cache_ttl_seconds": 3600.0,
         "min_request_interval_seconds": 0.25,
     }
     assert result.status == ResolutionStatus.EXACT_TICKER_MATCH

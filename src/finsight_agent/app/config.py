@@ -19,6 +19,10 @@ class Settings(BaseSettings):
         default=".finsight_cache/sec",
         validation_alias="SEC_CACHE_DIR",
     )
+    sec_cache_ttl_seconds: float | None = Field(
+        default=86400.0,
+        validation_alias="SEC_CACHE_TTL_SECONDS",
+    )
     sec_request_interval_seconds: float = Field(
         default=0.1,
         validation_alias="SEC_REQUEST_INTERVAL_SECONDS",

@@ -77,10 +77,12 @@ def test_build_research_graph_runner_passes_sec_settings(
             self,
             user_agent: str,
             cache_dir: str | None = None,
+            cache_ttl_seconds: float | None = None,
             min_request_interval_seconds: float = 0.0,
         ) -> None:
             captured["user_agent"] = user_agent
             captured["cache_dir"] = cache_dir
+            captured["cache_ttl_seconds"] = cache_ttl_seconds
             captured["min_request_interval_seconds"] = min_request_interval_seconds
 
         def fetch_company_submissions(self, cik: str) -> dict:
@@ -101,6 +103,7 @@ def test_build_research_graph_runner_passes_sec_settings(
     cache_dir = tmp_path / "sec-cache"
     monkeypatch.setenv("SEC_USER_AGENT", "FinSightTest/0.1 test@example.com")
     monkeypatch.setenv("SEC_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("SEC_CACHE_TTL_SECONDS", "3600")
     monkeypatch.setenv("SEC_REQUEST_INTERVAL_SECONDS", "0.25")
     monkeypatch.setattr(
         "finsight_agent.app.graph.runner.SECClient",
@@ -117,6 +120,7 @@ def test_build_research_graph_runner_passes_sec_settings(
     assert captured == {
         "user_agent": "FinSightTest/0.1 test@example.com",
         "cache_dir": str(cache_dir),
+        "cache_ttl_seconds": 3600.0,
         "min_request_interval_seconds": 0.25,
     }
     get_settings.cache_clear()
