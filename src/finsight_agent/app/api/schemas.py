@@ -1,7 +1,9 @@
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from finsight_agent.app.research_status import ResearchStatus
 
 
 class HealthResponse(BaseModel):
@@ -138,9 +140,6 @@ class ResearchError(BaseModel):
             msg = "Research error field cannot be empty."
             raise ValueError(msg)
         return text
-
-
-ResearchStatus = Literal["queued", "running", "completed", "failed"]
 
 
 class ResearchResponse(BaseModel):

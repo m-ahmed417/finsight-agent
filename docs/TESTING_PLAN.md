@@ -437,9 +437,11 @@ Test first:
 
 - `POST /research` validates request body.
 - Empty query returns validation error.
-- Successful request returns `run_id`, `status`, and report data.
-- Failed resolution returns a user-friendly error.
+- Successful request returns `202 Accepted`, `run_id`, and `status=queued`.
+- Background execution can update the stored run to `completed` with report data.
+- Background execution can update the stored run to `failed` with structured errors.
 - `GET /research/{run_id}` returns stored run.
+- `GET /research/{run_id}/steps` returns stored agent steps.
 - Unknown run ID returns 404.
 - `GET /companies/search` returns resolver candidates.
 
@@ -507,7 +509,9 @@ Use:
 
 Test:
 
-- `POST /research` with `AAPL` returns completed report.
+- `POST /research` with `AAPL` returns `202 Accepted` and a queued run ID.
+- Background execution persists a completed report.
+- The run can be polled with `GET /research/{run_id}` until completion.
 - Report has disclaimer.
 - Report has sources.
 - Run can be retrieved by ID.
@@ -626,4 +630,3 @@ What tests were added.
 What commands passed.
 What remains for the next stage.
 ```
-

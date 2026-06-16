@@ -4,6 +4,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
+from finsight_agent.app.research_status import (
+    RESEARCH_STATUS_COMPLETED,
+    RESEARCH_STATUS_FAILED,
+    RESEARCH_STATUS_QUEUED,
+    RESEARCH_STATUS_RUNNING,
+)
 
 FILING_TEXT_EXCERPT_LENGTH = 2000
 
@@ -16,7 +22,7 @@ class ResearchRunRepository:
         run = ResearchRun(
             id=str(run_id),
             query=query,
-            status="queued",
+            status=RESEARCH_STATUS_QUEUED,
             risk_factors_json=[],
             risk_themes_json=[],
             warnings_json=[],
@@ -33,7 +39,7 @@ class ResearchRunRepository:
         if run is None:
             return None
 
-        run.status = "running"
+        run.status = RESEARCH_STATUS_RUNNING
         run.completed_at = None
         self._session.commit()
         self._session.refresh(run)
@@ -44,7 +50,7 @@ class ResearchRunRepository:
         if run is None:
             return None
 
-        run.status = "failed"
+        run.status = RESEARCH_STATUS_FAILED
         run.errors_json = [
             *(run.errors_json or []),
             {
@@ -66,7 +72,7 @@ class ResearchRunRepository:
     ) -> ResearchRun | None:
         return self._mark_from_graph_result(
             run_id,
-            status="completed",
+            status=RESEARCH_STATUS_COMPLETED,
             graph_result=graph_result,
         )
 
@@ -78,7 +84,7 @@ class ResearchRunRepository:
     ) -> ResearchRun | None:
         return self._mark_from_graph_result(
             run_id,
-            status="failed",
+            status=RESEARCH_STATUS_FAILED,
             graph_result=graph_result,
         )
 

@@ -1,0 +1,20 @@
+from typing import Literal
+
+RESEARCH_STATUS_QUEUED = "queued"
+RESEARCH_STATUS_RUNNING = "running"
+RESEARCH_STATUS_COMPLETED = "completed"
+RESEARCH_STATUS_FAILED = "failed"
+
+ResearchStatus = Literal["queued", "running", "completed", "failed"]
+
+RESEARCH_STATUSES: tuple[ResearchStatus, ...] = (
+    RESEARCH_STATUS_QUEUED,
+    RESEARCH_STATUS_RUNNING,
+    RESEARCH_STATUS_COMPLETED,
+    RESEARCH_STATUS_FAILED,
+)
+
+TERMINAL_RESEARCH_STATUSES: tuple[ResearchStatus, ...] = (
+    RESEARCH_STATUS_COMPLETED,
+    RESEARCH_STATUS_FAILED,
+)

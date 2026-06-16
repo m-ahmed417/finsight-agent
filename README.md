@@ -24,6 +24,67 @@ Run the API locally:
 uv run uvicorn finsight_agent.app.main:app --reload
 ```
 
+## API Workflow
+
+FinSight uses a run-based background workflow for research requests.
+`POST /research` creates a persisted research run and returns immediately with
+`202 Accepted`; it does not wait for the SEC/LLM workflow to finish.
+
+Submit a research run:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/research" `
+  -ContentType "application/json" `
+  -Body '{"query":"AAPL"}'
+```
+
+The response includes a `run_id`, the original query, and `status="queued"`:
+
+```json
+{
+  "run_id": "00000000-0000-0000-0000-000000000001",
+  "query": "AAPL",
+  "status": "queued",
+  "ticker": null,
+  "company_name": null,
+  "report": null,
+  "financial_metrics": null,
+  "warnings": [],
+  "errors": [],
+  "sources": []
+}
+```
+
+Poll the run until it reaches a terminal status:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}"
+```
+
+Research run statuses are:
+
+- `queued`: the run has been accepted and stored.
+- `running`: the background workflow is executing.
+- `completed`: the report and research data are available.
+- `failed`: the workflow stopped with one or more structured `errors`.
+
+When a run is `completed`, read the `report`, `financial_metrics`,
+`risk_factors`, `risk_themes`, `research_insights`, `warnings`, `errors`, and
+`sources` fields from `GET /research/{run_id}`. When a run is `failed`, inspect
+`errors`, `warnings`, and any partial `sources` for the reason and available
+diagnostics.
+
+Fetch the persisted audit trail:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/steps"
+```
+
+`GET /research/{run_id}/steps` returns the stored `agent_steps` as records with
+`node_name`, `status`, `message`, and `error_message` fields.
+
 ## Configuration
 
 Core environment variables:

@@ -184,13 +184,13 @@ Core target endpoints:
 For production readiness, prefer a run-based API:
 
 ```text
-POST /research -> creates a run and returns run_id/status/result when available
-GET /research/{run_id} -> retrieves run state and final report
+POST /research -> creates a queued run and returns 202 Accepted with run_id/status
+GET /research/{run_id} -> retrieves run state, final report, or structured errors
 GET /research/{run_id}/steps -> retrieves audit trail
 ```
 
-Initial MVP may execute synchronously, but the data model and API should be
-compatible with asynchronous/background execution later.
+The API is run-based: clients submit work, store the returned `run_id`, and poll
+until the run reaches `completed` or `failed`.
 
 ### Services Layer
 
@@ -637,9 +637,7 @@ Recommended statuses:
 queued
 running
 completed
-partial
 failed
-cancelled
 ```
 
 ### AgentStep
@@ -845,7 +843,7 @@ Preferred build order:
 3. Add SEC client with mocked tests.
 4. Add metrics extraction service with fixtures.
 5. Add graph state and initial LangGraph workflow.
-6. Wire `POST /research` to the graph.
+6. Wire `POST /research` to queued background graph execution.
 7. Add SQLite persistence and repositories.
 8. Add report generation with a mock LLM provider first.
 9. Add compliance checker.
@@ -884,14 +882,14 @@ Do not build a frontend before the backend workflow is reliable.
 
 The MVP is complete when:
 
-- A user can call `POST /research` with a ticker.
+- A user can call `POST /research` with a ticker and receive a queued run ID.
 - The system resolves the company.
 - The system fetches SEC data.
 - The system calculates basic financial metrics.
 - The system generates a structured research report.
 - The system runs a compliance check.
 - The result is stored in the database.
-- The user can retrieve the research run by ID.
+- The user can poll the research run by ID until it is `completed` or `failed`.
 - Core functionality is covered by tests.
 - The README explains the project clearly.
 - The report avoids financial advice.
@@ -917,4 +915,3 @@ The strongest V2 feature would be:
 
 > Compare the latest 10-K risk factors with the previous 10-K and highlight new,
 > removed, or expanded risks.
-
