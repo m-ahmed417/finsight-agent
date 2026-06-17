@@ -8,6 +8,7 @@ def test_settings_load_default_values(monkeypatch) -> None:
     monkeypatch.delenv("SEC_CACHE_DIR", raising=False)
     monkeypatch.delenv("SEC_CACHE_TTL_SECONDS", raising=False)
     monkeypatch.delenv("SEC_REQUEST_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("RESEARCH_RUN_STALE_AFTER_SECONDS", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -22,6 +23,7 @@ def test_settings_load_default_values(monkeypatch) -> None:
     assert settings.sec_cache_dir == ".finsight_cache/sec"
     assert settings.sec_cache_ttl_seconds == 86400.0
     assert settings.sec_request_interval_seconds == 0.1
+    assert settings.research_run_stale_after_seconds == 3600.0
     assert settings.llm_provider == "mock"
     assert settings.llm_model == "mock"
     assert settings.openai_api_key is None
@@ -35,6 +37,7 @@ def test_settings_load_environment_overrides(monkeypatch) -> None:
     monkeypatch.setenv("SEC_CACHE_DIR", ".tmp/sec-cache")
     monkeypatch.setenv("SEC_CACHE_TTL_SECONDS", "3600")
     monkeypatch.setenv("SEC_REQUEST_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("RESEARCH_RUN_STALE_AFTER_SECONDS", "7200")
     monkeypatch.setenv("LLM_PROVIDER", "fake")
     monkeypatch.setenv("LLM_MODEL", "fake-model")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
@@ -48,6 +51,7 @@ def test_settings_load_environment_overrides(monkeypatch) -> None:
     assert settings.sec_cache_dir == ".tmp/sec-cache"
     assert settings.sec_cache_ttl_seconds == 3600.0
     assert settings.sec_request_interval_seconds == 0.25
+    assert settings.research_run_stale_after_seconds == 7200.0
     assert settings.llm_provider == "fake"
     assert settings.llm_model == "fake-model"
     assert settings.openai_api_key is not None

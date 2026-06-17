@@ -27,6 +27,11 @@ class Settings(BaseSettings):
         default=0.1,
         validation_alias="SEC_REQUEST_INTERVAL_SECONDS",
     )
+    research_run_stale_after_seconds: float = Field(
+        default=3600.0,
+        ge=0.0,
+        validation_alias="RESEARCH_RUN_STALE_AFTER_SECONDS",
+    )
     llm_provider: str = Field(default="mock", validation_alias="LLM_PROVIDER")
     llm_model: str = Field(default="mock", validation_alias="LLM_MODEL")
     openai_api_key: SecretStr | None = Field(

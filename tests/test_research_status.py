@@ -2,6 +2,7 @@ from typing import get_args
 
 from finsight_agent.app.api.schemas import ResearchResponse
 from finsight_agent.app.research_status import (
+    IN_PROGRESS_RESEARCH_STATUSES,
     RESEARCH_STATUS_COMPLETED,
     RESEARCH_STATUS_FAILED,
     RESEARCH_STATUS_QUEUED,
@@ -24,6 +25,7 @@ def test_research_status_constants_define_api_lifecycle_contract() -> None:
         "failed",
     )
     assert TERMINAL_RESEARCH_STATUSES == ("completed", "failed")
+    assert IN_PROGRESS_RESEARCH_STATUSES == ("queued", "running")
 
 
 def test_research_response_status_uses_shared_lifecycle_contract() -> None:

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -153,6 +155,25 @@ def test_research_response_accepts_known_lifecycle_statuses(status: str) -> None
     )
 
     assert response.status == status
+
+
+def test_research_response_exposes_lifecycle_timestamps() -> None:
+    created_at = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 6, 16, 13, 2, 30, tzinfo=timezone.utc)
+
+    response = ResearchResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "status": "completed",
+            "created_at": created_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_seconds": 150.0,
+        }
+    )
+
+    assert response.created_at == created_at
+    assert response.completed_at == completed_at
+    assert response.duration_seconds == 150.0
 
 
 def test_research_response_rejects_unknown_lifecycle_status() -> None:

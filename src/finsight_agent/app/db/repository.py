@@ -1,10 +1,12 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
 from finsight_agent.app.research_status import (
+    IN_PROGRESS_RESEARCH_STATUSES,
     RESEARCH_STATUS_COMPLETED,
     RESEARCH_STATUS_FAILED,
     RESEARCH_STATUS_QUEUED,
@@ -12,6 +14,14 @@ from finsight_agent.app.research_status import (
 )
 
 FILING_TEXT_EXCERPT_LENGTH = 2000
+STALE_RESEARCH_RUN_ERROR = {
+    "code": "research_run_stale",
+    "message": (
+        "Research run was marked failed because it remained queued or "
+        "running past the stale-run cutoff."
+    ),
+    "severity": "error",
+}
 
 
 class ResearchRunRepository:
@@ -35,15 +45,19 @@ class ResearchRunRepository:
         return run
 
     def mark_running(self, run_id: UUID) -> ResearchRun | None:
-        run = self.get_by_id(run_id)
-        if run is None:
+        statement = (
+            update(ResearchRun)
+            .where(ResearchRun.id == str(run_id))
+            .where(ResearchRun.status == RESEARCH_STATUS_QUEUED)
+            .values(status=RESEARCH_STATUS_RUNNING, completed_at=None)
+        )
+        result = self._session.execute(statement)
+        if result.rowcount != 1:
+            self._session.rollback()
             return None
 
-        run.status = RESEARCH_STATUS_RUNNING
-        run.completed_at = None
         self._session.commit()
-        self._session.refresh(run)
-        return run
+        return self.get_by_id(run_id)
 
     def mark_failed(self, run_id: UUID, *, error: str) -> ResearchRun | None:
         run = self.get_by_id(run_id)
@@ -87,6 +101,36 @@ class ResearchRunRepository:
             status=RESEARCH_STATUS_FAILED,
             graph_result=graph_result,
         )
+
+    def get_stale_in_progress_runs(
+        self,
+        *,
+        older_than: datetime,
+    ) -> list[ResearchRun]:
+        statement = (
+            select(ResearchRun)
+            .where(ResearchRun.status.in_(IN_PROGRESS_RESEARCH_STATUSES))
+            .where(ResearchRun.completed_at.is_(None))
+            .where(ResearchRun.created_at < older_than)
+            .order_by(ResearchRun.created_at, ResearchRun.id)
+        )
+        return list(self._session.scalars(statement))
+
+    def mark_stale_in_progress_runs_failed(
+        self,
+        *,
+        older_than: datetime,
+    ) -> list[ResearchRun]:
+        stale_runs = self.get_stale_in_progress_runs(older_than=older_than)
+        for run in stale_runs:
+            run.status = RESEARCH_STATUS_FAILED
+            run.errors_json = [*(run.errors_json or []), dict(STALE_RESEARCH_RUN_ERROR)]
+            run.completed_at = utc_now()
+
+        self._session.commit()
+        for run in stale_runs:
+            self._session.refresh(run)
+        return stale_runs
 
     def _mark_from_graph_result(
         self,

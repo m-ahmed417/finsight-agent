@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -10,6 +11,9 @@ from finsight_agent.app.api.dependencies import (
     get_research_repository,
 )
 from finsight_agent.app.main import app
+
+DEFAULT_CREATED_AT = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+DEFAULT_COMPLETED_AT = datetime(2026, 6, 16, 13, 2, 30, tzinfo=timezone.utc)
 
 
 class FakeResearchRepository:
@@ -153,6 +157,10 @@ def _make_run(
         id=str(run_id),
         query=query,
         status=status,
+        created_at=DEFAULT_CREATED_AT,
+        completed_at=(
+            DEFAULT_COMPLETED_AT if status in {"completed", "failed"} else None
+        ),
         ticker=result.get("ticker"),
         company_name=result.get("company_name"),
         compliance_status=result.get("compliance_status"),
@@ -223,6 +231,9 @@ def test_get_research_returns_in_progress_lifecycle_statuses(
     assert body["run_id"] == str(run_id)
     assert body["query"] == "AAPL"
     assert body["status"] == status
+    assert_datetime_matches(body["created_at"], DEFAULT_CREATED_AT)
+    assert body["completed_at"] is None
+    assert body["duration_seconds"] is None
     assert body["ticker"] is None
     assert body["company_name"] is None
     assert body["report"] is None
@@ -282,6 +293,9 @@ def test_post_research_background_job_can_complete_run(
     assert body["run_id"] == run_id
     assert body["query"] == "AAPL"
     assert body["status"] == "completed"
+    assert_datetime_matches(body["created_at"], DEFAULT_CREATED_AT)
+    assert_datetime_matches(body["completed_at"], DEFAULT_COMPLETED_AT)
+    assert body["duration_seconds"] == 150.0
     assert body["ticker"] == "AAPL"
     assert body["company_name"] == "Apple Inc."
     assert body["compliance_status"] == "allowed"
@@ -570,6 +584,9 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
         "completed",
         "failed",
     ]
+    assert_openapi_datetime_property(research_properties["created_at"])
+    assert_openapi_datetime_property(research_properties["completed_at"])
+    assert_openapi_number_property(research_properties["duration_seconds"])
     assert "polling" in research_properties["status"]["description"].lower()
     assert research_properties["warnings"]["items"]["$ref"] == (
         "#/components/schemas/ResearchWarning"
@@ -624,3 +641,21 @@ def test_get_research_steps_returns_404_for_unknown_run_id(client: TestClient) -
     response = client.get(f"/research/{uuid4()}/steps")
 
     assert response.status_code == 404
+
+
+def assert_datetime_matches(value: str, expected: datetime) -> None:
+    assert datetime.fromisoformat(value.replace("Z", "+00:00")) == expected
+
+
+def assert_openapi_datetime_property(schema: dict) -> None:
+    if schema.get("format") == "date-time":
+        return
+
+    assert any(option.get("format") == "date-time" for option in schema.get("anyOf", []))
+
+
+def assert_openapi_number_property(schema: dict) -> None:
+    if schema.get("type") == "number":
+        return
+
+    assert any(option.get("type") == "number" for option in schema.get("anyOf", []))

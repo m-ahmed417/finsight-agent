@@ -47,6 +47,9 @@ The response includes a `run_id`, the original query, and `status="queued"`:
   "run_id": "00000000-0000-0000-0000-000000000001",
   "query": "AAPL",
   "status": "queued",
+  "created_at": "2026-06-16T13:00:00Z",
+  "completed_at": null,
+  "duration_seconds": null,
   "ticker": null,
   "company_name": null,
   "report": null,
@@ -70,11 +73,23 @@ Research run statuses are:
 - `completed`: the report and research data are available.
 - `failed`: the workflow stopped with one or more structured `errors`.
 
+Every research response includes lifecycle timestamps. `created_at` is the UTC
+time when the run was accepted. `completed_at` is `null` while a run is
+`queued` or `running`, then becomes the UTC time when the run reaches a
+terminal status (`completed` or `failed`). `duration_seconds` is `null` until
+`completed_at` is set, then reports the elapsed seconds between `created_at`
+and `completed_at`.
+
 When a run is `completed`, read the `report`, `financial_metrics`,
 `risk_factors`, `risk_themes`, `research_insights`, `warnings`, `errors`, and
 `sources` fields from `GET /research/{run_id}`. When a run is `failed`, inspect
 `errors`, `warnings`, and any partial `sources` for the reason and available
 diagnostics.
+
+On application startup, FinSight recovers stale in-progress runs. Any `queued`
+or `running` run older than `RESEARCH_RUN_STALE_AFTER_SECONDS` is marked
+`failed` with a structured `research_run_stale` error so polling clients do not
+wait forever on abandoned background work.
 
 Fetch the persisted audit trail:
 
@@ -96,6 +111,7 @@ SEC_USER_AGENT=FinSight/0.1 your-email@example.com
 SEC_CACHE_DIR=.finsight_cache/sec
 SEC_CACHE_TTL_SECONDS=86400
 SEC_REQUEST_INTERVAL_SECONDS=0.1
+RESEARCH_RUN_STALE_AFTER_SECONDS=3600
 LLM_PROVIDER=mock
 LLM_MODEL=mock
 OPENAI_API_KEY=
@@ -107,6 +123,11 @@ deterministic local development and tests. Real providers should be configured
 with a matching `LLM_MODEL` and provider API credentials in the environment.
 Use `OPENAI_API_KEY` for `LLM_PROVIDER=openai` and `DEEPSEEK_API_KEY` for
 `LLM_PROVIDER=deepseek`.
+
+`RESEARCH_RUN_STALE_AFTER_SECONDS` controls startup recovery for abandoned
+background research runs. The default is `3600` seconds. During startup, FinSight
+marks stale `queued` and `running` runs as `failed` rather than leaving them in
+a non-terminal polling state.
 
 ### SEC Data Operations
 

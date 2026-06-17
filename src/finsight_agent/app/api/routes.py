@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -111,6 +112,9 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
         run_id=UUID(run.id),
         query=run.query,
         status=run.status,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        duration_seconds=_duration_seconds(run.created_at, run.completed_at),
         ticker=run.ticker,
         company_name=run.company_name,
         compliance_status=run.compliance_status,
@@ -125,6 +129,24 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
         errors=run.errors_json,
         sources=run.sources_json,
     )
+
+
+def _duration_seconds(
+    created_at: datetime | None,
+    completed_at: datetime | None,
+) -> float | None:
+    if created_at is None or completed_at is None:
+        return None
+
+    created_at_utc = _as_utc(created_at)
+    completed_at_utc = _as_utc(completed_at)
+    return max((completed_at_utc - created_at_utc).total_seconds(), 0.0)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _agent_step_to_response(step: AgentStep) -> AgentStepResponse:

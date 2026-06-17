@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -150,6 +151,25 @@ class ResearchResponse(BaseModel):
             "Lifecycle status for polling research runs: queued, running, "
             "completed, or failed."
         )
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the research run was created.",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description=(
+            "UTC timestamp when the research run reached a terminal status, "
+            "or null while it is queued or running."
+        ),
+    )
+    duration_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Elapsed seconds between created_at and completed_at, or null while "
+            "the run is queued or running."
+        ),
     )
     ticker: str | None = None
     company_name: str | None = None

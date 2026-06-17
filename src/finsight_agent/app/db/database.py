@@ -44,6 +44,8 @@ def _ensure_sqlite_research_run_columns() -> None:
         for column in inspect(engine).get_columns("research_runs")
     }
     column_definitions = {
+        "compliance_status": "VARCHAR(30)",
+        "report_quality_status": "VARCHAR(30)",
         "filing_text_excerpt": "TEXT",
         "risk_factors_json": "JSON NOT NULL DEFAULT '[]'",
         "risk_themes_json": "JSON NOT NULL DEFAULT '[]'",
