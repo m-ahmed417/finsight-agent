@@ -132,6 +132,24 @@ class ResearchRunRepository:
             self._session.refresh(run)
         return stale_runs
 
+    def list_recent_runs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[ResearchRun]:
+        if limit <= 0:
+            return []
+
+        statement = select(ResearchRun).order_by(
+            ResearchRun.created_at.desc(),
+            ResearchRun.id.desc(),
+        )
+        if status is not None:
+            statement = statement.where(ResearchRun.status == status)
+
+        return list(self._session.scalars(statement.limit(limit)))
+
     def _mark_from_graph_result(
         self,
         run_id: UUID,

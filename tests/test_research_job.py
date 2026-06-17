@@ -1,9 +1,14 @@
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
+
 from finsight_agent.app.services.research_job import (
+    ResearchRunNotFoundError,
+    ResearchRunNotRetryableError,
     enqueue_research_run,
     execute_research_run,
+    retry_failed_research_run,
 )
 
 DEFAULT_RUNNING_RUN = SimpleNamespace(status="running")
@@ -29,6 +34,7 @@ class FakeGraphRunner:
 class FakeRepository:
     def __init__(self, *, running_run: object | None = DEFAULT_RUNNING_RUN) -> None:
         self.running_run = running_run
+        self.runs: dict[UUID, SimpleNamespace] = {}
         self.pending_runs: list[dict] = []
         self.running_run_ids: list[UUID] = []
         self.completed_updates: list[dict] = []
@@ -37,7 +43,12 @@ class FakeRepository:
 
     def create_pending_run(self, *, run_id: UUID, query: str) -> SimpleNamespace:
         self.pending_runs.append({"run_id": run_id, "query": query})
-        return SimpleNamespace(id=str(run_id), query=query, status="queued")
+        run = SimpleNamespace(id=str(run_id), query=query, status="queued")
+        self.runs[run_id] = run
+        return run
+
+    def get_by_id(self, run_id: UUID) -> SimpleNamespace | None:
+        return self.runs.get(run_id)
 
     def mark_running(self, run_id: UUID) -> SimpleNamespace | None:
         self.running_run_ids.append(run_id)
@@ -80,6 +91,66 @@ def test_enqueue_research_run_creates_pending_run_with_provided_id() -> None:
     assert run.query == "AAPL"
     assert run.status == "queued"
     assert repository.pending_runs == [{"run_id": run_id, "query": "AAPL"}]
+
+
+def test_retry_failed_research_run_creates_new_queued_run_from_original_query() -> None:
+    repository = FakeRepository()
+    original_run_id = uuid4()
+    retry_run_id = uuid4()
+    repository.runs[original_run_id] = SimpleNamespace(
+        id=str(original_run_id),
+        query="AAPL",
+        status="failed",
+    )
+
+    retried_run = retry_failed_research_run(
+        run_id=original_run_id,
+        repository=repository,
+        new_run_id=retry_run_id,
+    )
+
+    assert retried_run.id == str(retry_run_id)
+    assert retried_run.query == "AAPL"
+    assert retried_run.status == "queued"
+    assert repository.pending_runs == [{"run_id": retry_run_id, "query": "AAPL"}]
+    assert repository.runs[original_run_id].status == "failed"
+
+
+def test_retry_failed_research_run_raises_when_original_run_is_missing() -> None:
+    repository = FakeRepository()
+    missing_run_id = uuid4()
+
+    try:
+        retry_failed_research_run(run_id=missing_run_id, repository=repository)
+    except ResearchRunNotFoundError as exc:
+        assert exc.run_id == missing_run_id
+    else:
+        raise AssertionError("Expected ResearchRunNotFoundError.")
+
+    assert repository.pending_runs == []
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "completed"])
+def test_retry_failed_research_run_raises_when_original_run_is_not_failed(
+    status: str,
+) -> None:
+    repository = FakeRepository()
+    original_run_id = uuid4()
+    repository.runs[original_run_id] = SimpleNamespace(
+        id=str(original_run_id),
+        query="AAPL",
+        status=status,
+    )
+
+    try:
+        retry_failed_research_run(run_id=original_run_id, repository=repository)
+    except ResearchRunNotRetryableError as exc:
+        assert exc.run_id == original_run_id
+        assert exc.status == status
+    else:
+        raise AssertionError("Expected ResearchRunNotRetryableError.")
+
+    assert repository.pending_runs == []
 
 
 def test_execute_research_run_marks_completed_when_graph_has_no_errors() -> None:

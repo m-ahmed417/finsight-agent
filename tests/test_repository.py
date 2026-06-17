@@ -544,12 +544,115 @@ def test_repository_marks_stale_in_progress_runs_failed(tmp_path) -> None:
     session.close()
 
 
+def test_repository_lists_recent_research_runs_newest_first_with_limit(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+    oldest_id = create_run_with_created_at(
+        repository,
+        session,
+        query="AAPL",
+        status=RESEARCH_STATUS_COMPLETED,
+        created_at=datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
+    )
+    newest_id = create_run_with_created_at(
+        repository,
+        session,
+        query="MSFT",
+        status=RESEARCH_STATUS_FAILED,
+        created_at=datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc),
+    )
+    middle_id = create_run_with_created_at(
+        repository,
+        session,
+        query="NVDA",
+        status=RESEARCH_STATUS_RUNNING,
+        created_at=datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
+    )
+
+    recent_runs = repository.list_recent_runs(limit=2)
+
+    assert [run.id for run in recent_runs] == [str(newest_id), str(middle_id)]
+    assert [run.query for run in recent_runs] == ["MSFT", "NVDA"]
+    assert str(oldest_id) not in [run.id for run in recent_runs]
+
+    session.close()
+
+
+def test_repository_lists_recent_research_runs_filtered_by_status(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+    older_failed_id = create_run_with_created_at(
+        repository,
+        session,
+        query="AAPL",
+        status=RESEARCH_STATUS_FAILED,
+        created_at=datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
+    )
+    create_run_with_created_at(
+        repository,
+        session,
+        query="MSFT",
+        status=RESEARCH_STATUS_COMPLETED,
+        created_at=datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
+    )
+    newer_failed_id = create_run_with_created_at(
+        repository,
+        session,
+        query="NVDA",
+        status=RESEARCH_STATUS_FAILED,
+        created_at=datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc),
+    )
+
+    failed_runs = repository.list_recent_runs(
+        status=RESEARCH_STATUS_FAILED,
+        limit=10,
+    )
+
+    assert [run.id for run in failed_runs] == [
+        str(newer_failed_id),
+        str(older_failed_id),
+    ]
+    assert [run.status for run in failed_runs] == [
+        RESEARCH_STATUS_FAILED,
+        RESEARCH_STATUS_FAILED,
+    ]
+
+    session.close()
+
+
 def test_repository_returns_none_for_unknown_run_id(tmp_path) -> None:
     repository, session = make_repository(tmp_path)
 
     assert repository.get_by_id(uuid4()) is None
 
     session.close()
+
+
+def create_run_with_created_at(
+    repository,
+    session,
+    *,
+    query: str,
+    status: str,
+    created_at: datetime,
+):
+    run_id = uuid4()
+    if status == RESEARCH_STATUS_COMPLETED:
+        repository.create_from_graph_result(
+            run_id=run_id,
+            query=query,
+            status=RESEARCH_STATUS_COMPLETED,
+            graph_result={"warnings": [], "errors": [], "sources": [], "agent_steps": []},
+        )
+    elif status == RESEARCH_STATUS_FAILED:
+        repository.create_pending_run(run_id=run_id, query=query)
+        repository.mark_failed(run_id, error="Run failed.")
+    elif status == RESEARCH_STATUS_RUNNING:
+        repository.create_pending_run(run_id=run_id, query=query)
+        repository.mark_running(run_id)
+    else:
+        repository.create_pending_run(run_id=run_id, query=query)
+
+    set_created_at(repository, session, run_id, created_at)
+    return run_id
 
 
 def test_repository_returns_empty_steps_for_unknown_run_id(tmp_path) -> None:

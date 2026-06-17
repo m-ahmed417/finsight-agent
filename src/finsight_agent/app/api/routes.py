@@ -18,8 +18,14 @@ from finsight_agent.app.api.schemas import (
 )
 from finsight_agent.app.db.models import AgentStep, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunRepository
+from finsight_agent.app.research_status import ResearchStatus
 from finsight_agent.app.services.company_resolver import CompanyResolver
-from finsight_agent.app.services.research_job import enqueue_research_run
+from finsight_agent.app.services.research_job import (
+    ResearchRunNotFoundError,
+    ResearchRunNotRetryableError,
+    enqueue_research_run,
+    retry_failed_research_run,
+)
 
 router = APIRouter()
 
@@ -75,6 +81,59 @@ def research(
     )
 
     return _research_run_to_response(run)
+
+
+@router.get("/research", response_model=list[ResearchResponse])
+def list_research_runs(
+    status: ResearchStatus | None = Query(
+        default=None,
+        description="Optional lifecycle status filter.",
+    ),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of recent research runs to return.",
+    ),
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> list[ResearchResponse]:
+    runs = repository.list_recent_runs(status=status, limit=limit)
+    return [_research_run_to_response(run) for run in runs]
+
+
+@router.post(
+    "/research/{run_id}/retry",
+    response_model=ResearchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_research(
+    run_id: UUID,
+    background_tasks: BackgroundTasks,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+    research_job_executor: ResearchJobExecutor = Depends(get_research_job_executor),
+) -> ResearchResponse:
+    try:
+        retry_run = retry_failed_research_run(
+            run_id=run_id,
+            repository=repository,
+        )
+    except ResearchRunNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        ) from exc
+    except ResearchRunNotRetryableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only failed research runs can be retried.",
+        ) from exc
+
+    background_tasks.add_task(
+        research_job_executor,
+        run_id=UUID(retry_run.id),
+        query=retry_run.query,
+    )
+    return _research_run_to_response(retry_run)
 
 
 @router.get("/research/{run_id}", response_model=ResearchResponse)

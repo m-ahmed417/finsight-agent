@@ -53,3 +53,46 @@ def test_readme_documents_research_lifecycle_timing_and_recovery() -> None:
         "failed",
     ]:
         assert phrase in configuration_section
+
+
+def test_readme_documents_failed_research_retry_workflow() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "## API Workflow" in readme
+    assert "## Configuration" in readme
+    workflow_section = readme.split("## API Workflow", maxsplit=1)[1].split(
+        "## Configuration",
+        maxsplit=1,
+    )[0]
+
+    for phrase in [
+        "POST /research/{run_id}/retry",
+        "202 Accepted",
+        "404",
+        "409",
+        "Only failed research runs can be retried",
+        "new queued run",
+        "original failed run",
+    ]:
+        assert phrase in workflow_section
+
+
+def test_readme_documents_research_run_listing_workflow() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "## API Workflow" in readme
+    assert "## Configuration" in readme
+    workflow_section = readme.split("## API Workflow", maxsplit=1)[1].split(
+        "## Configuration",
+        maxsplit=1,
+    )[0]
+
+    for phrase in [
+        "GET /research`",
+        "newest-first",
+        "status=failed",
+        "limit=20",
+        "1 and 100",
+        "same response shape",
+    ]:
+        assert phrase in workflow_section

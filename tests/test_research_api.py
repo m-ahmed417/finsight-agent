@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ class FakeResearchRepository:
         self.completed_updates: list[dict] = []
         self.failed_graph_updates: list[dict] = []
         self.failed_updates: list[dict] = []
+        self.list_recent_calls: list[dict] = []
         self.runs: dict[UUID, SimpleNamespace] = {}
 
     def create_pending_run(self, *, run_id: UUID, query: str) -> SimpleNamespace:
@@ -80,6 +81,23 @@ class FakeResearchRepository:
 
     def get_by_id(self, run_id: UUID) -> SimpleNamespace | None:
         return self.runs.get(run_id)
+
+    def list_recent_runs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[SimpleNamespace]:
+        self.list_recent_calls.append({"status": status, "limit": limit})
+        runs = list(self.runs.values())
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+
+        return sorted(
+            runs,
+            key=lambda run: (run.created_at, run.id),
+            reverse=True,
+        )[:limit]
 
     def get_steps_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
         run = self.runs.get(run_id)
@@ -151,13 +169,14 @@ def _make_run(
     query: str,
     status: str,
     graph_result: dict | None = None,
+    created_at: datetime = DEFAULT_CREATED_AT,
 ) -> SimpleNamespace:
     result = graph_result or {}
     return SimpleNamespace(
         id=str(run_id),
         query=query,
         status=status,
-        created_at=DEFAULT_CREATED_AT,
+        created_at=created_at,
         completed_at=(
             DEFAULT_COMPLETED_AT if status in {"completed", "failed"} else None
         ),
@@ -212,6 +231,103 @@ def test_post_research_queues_run_and_schedules_background_job(
     assert body["sources"] == []
     assert repository.pending_runs == [{"run_id": run_id, "query": "AAPL"}]
     assert job_executor.invocations == [{"run_id": run_id, "query": "AAPL"}]
+
+
+def test_get_research_lists_recent_runs_newest_first_with_limit(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    oldest_id = uuid4()
+    newest_id = uuid4()
+    middle_id = uuid4()
+    repository.runs[oldest_id] = _make_run(
+        run_id=oldest_id,
+        query="AAPL",
+        status="completed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=2),
+    )
+    repository.runs[newest_id] = _make_run(
+        run_id=newest_id,
+        query="MSFT",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT,
+    )
+    repository.runs[middle_id] = _make_run(
+        run_id=middle_id,
+        query="NVDA",
+        status="running",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=1),
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get("/research?limit=2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [run["run_id"] for run in body] == [str(newest_id), str(middle_id)]
+    assert [run["query"] for run in body] == ["MSFT", "NVDA"]
+    assert str(oldest_id) not in [run["run_id"] for run in body]
+    assert repository.list_recent_calls == [{"status": None, "limit": 2}]
+
+
+def test_get_research_lists_recent_runs_filtered_by_status(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    older_failed_id = uuid4()
+    completed_id = uuid4()
+    newer_failed_id = uuid4()
+    repository.runs[older_failed_id] = _make_run(
+        run_id=older_failed_id,
+        query="AAPL",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=2),
+    )
+    repository.runs[completed_id] = _make_run(
+        run_id=completed_id,
+        query="MSFT",
+        status="completed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=1),
+    )
+    repository.runs[newer_failed_id] = _make_run(
+        run_id=newer_failed_id,
+        query="NVDA",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get("/research?status=failed&limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [run["run_id"] for run in body] == [
+        str(newer_failed_id),
+        str(older_failed_id),
+    ]
+    assert [run["status"] for run in body] == ["failed", "failed"]
+    assert str(completed_id) not in [run["run_id"] for run in body]
+    assert repository.list_recent_calls == [{"status": "failed", "limit": 10}]
+
+
+def test_get_research_list_rejects_invalid_status(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get("/research?status=cancelled")
+
+    assert response.status_code == 422
+    assert repository.list_recent_calls == []
+
+
+def test_get_research_list_rejects_invalid_limit(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get("/research?limit=0")
+
+    assert response.status_code == 422
+    assert repository.list_recent_calls == []
 
 
 @pytest.mark.parametrize("status", ["queued", "running"])
@@ -353,6 +469,83 @@ def test_post_research_background_job_can_fail_run_from_graph_errors(
     assert body["financial_metrics"] is None
     assert body["errors"][0]["code"] == "company_not_found"
     assert repository.failed_graph_updates[0]["run_id"] == UUID(run_id)
+
+
+def test_post_research_retry_creates_new_queued_run_from_failed_run(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    failed_run_id = uuid4()
+    repository.runs[failed_run_id] = _make_run(
+        run_id=failed_run_id,
+        query="AAPL",
+        status="failed",
+        graph_result={
+            "errors": [
+                {
+                    "code": "research_run_stale",
+                    "message": "Research run was marked failed.",
+                    "severity": "error",
+                }
+            ],
+            "warnings": [],
+            "sources": [],
+        },
+    )
+    job_executor = FakeResearchJobExecutor(repository=repository)
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    response = client.post(f"/research/{failed_run_id}/retry")
+
+    assert response.status_code == 202
+    body = response.json()
+    retry_run_id = UUID(body["run_id"])
+    assert retry_run_id != failed_run_id
+    assert body["query"] == "AAPL"
+    assert body["status"] == "queued"
+    assert body["completed_at"] is None
+    assert body["duration_seconds"] is None
+    assert body["errors"] == []
+    assert repository.runs[failed_run_id].status == "failed"
+    assert repository.pending_runs == [{"run_id": retry_run_id, "query": "AAPL"}]
+    assert job_executor.invocations == [{"run_id": retry_run_id, "query": "AAPL"}]
+
+
+def test_post_research_retry_returns_404_for_unknown_run_id(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    job_executor = FakeResearchJobExecutor(repository=repository)
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    response = client.post(f"/research/{uuid4()}/retry")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Research run not found."
+    assert repository.pending_runs == []
+    assert job_executor.invocations == []
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "completed"])
+def test_post_research_retry_returns_409_for_non_failed_run(
+    client: TestClient,
+    status: str,
+) -> None:
+    repository = FakeResearchRepository()
+    run_id = uuid4()
+    repository.runs[run_id] = _make_run(run_id=run_id, query="AAPL", status=status)
+    job_executor = FakeResearchJobExecutor(repository=repository)
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    response = client.post(f"/research/{run_id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only failed research runs can be retried."
+    assert repository.pending_runs == []
+    assert job_executor.invocations == []
 
 
 def test_post_research_rejects_empty_query(client: TestClient) -> None:
@@ -570,14 +763,22 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     openapi = response.json()
     schemas = openapi["components"]["schemas"]
     research_properties = schemas["ResearchResponse"]["properties"]
+    list_response_schema = openapi["paths"]["/research"]["get"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"]
     post_response_schema = openapi["paths"]["/research"]["post"]["responses"]["202"][
         "content"
     ]["application/json"]["schema"]
     steps_response_schema = openapi["paths"]["/research/{run_id}/steps"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
+    retry_response_schema = openapi["paths"]["/research/{run_id}/retry"]["post"][
+        "responses"
+    ]["202"]["content"]["application/json"]["schema"]
 
+    assert list_response_schema["items"]["$ref"] == "#/components/schemas/ResearchResponse"
     assert post_response_schema["$ref"] == "#/components/schemas/ResearchResponse"
+    assert retry_response_schema["$ref"] == "#/components/schemas/ResearchResponse"
     assert research_properties["status"]["enum"] == [
         "queued",
         "running",

@@ -66,6 +66,17 @@ Poll the run until it reaches a terminal status:
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}"
 ```
 
+List recent runs:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research?status=failed&limit=20"
+```
+
+`GET /research` returns recent runs in newest-first order using the same response shape
+as `GET /research/{run_id}`. Use `status=failed` to filter by a single lifecycle
+status. Use `limit=20` to control how many runs are returned; the API accepts
+limits between 1 and 100.
+
 Research run statuses are:
 
 - `queued`: the run has been accepted and stored.
@@ -90,6 +101,19 @@ On application startup, FinSight recovers stale in-progress runs. Any `queued`
 or `running` run older than `RESEARCH_RUN_STALE_AFTER_SECONDS` is marked
 `failed` with a structured `research_run_stale` error so polling clients do not
 wait forever on abandoned background work.
+
+Retry a failed run:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/research/{run_id}/retry"
+```
+
+`POST /research/{run_id}/retry` only retries runs whose current status is
+`failed`. A successful retry returns `202 Accepted` with a new queued run using
+the original query. The original failed run is preserved for audit history, and
+the retry response contains a different `run_id` for the new queued run. Unknown
+run IDs return `404`. Runs that are still `queued` or `running`, or already
+`completed`, return `409` with `Only failed research runs can be retried`.
 
 Fetch the persisted audit trail:
 

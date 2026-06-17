@@ -5,6 +5,22 @@ from finsight_agent.app.services.graph_result_validator import (
     GraphResultValidationError,
     validate_graph_result,
 )
+from finsight_agent.app.research_status import RESEARCH_STATUS_FAILED
+
+
+class ResearchRunNotFoundError(LookupError):
+    def __init__(self, run_id: UUID) -> None:
+        self.run_id = run_id
+        super().__init__(f"Research run {run_id} was not found.")
+
+
+class ResearchRunNotRetryableError(ValueError):
+    def __init__(self, *, run_id: UUID, status: str) -> None:
+        self.run_id = run_id
+        self.status = status
+        super().__init__(
+            f"Research run {run_id} cannot be retried while status is {status!r}."
+        )
 
 
 class ResearchGraphRunner(Protocol):
@@ -15,6 +31,9 @@ class ResearchGraphRunner(Protocol):
 class ResearchRunRepository(Protocol):
     def create_pending_run(self, *, run_id: UUID, query: str) -> object:
         """Persist a queued research run."""
+
+    def get_by_id(self, run_id: UUID) -> object | None:
+        """Return a persisted research run by ID."""
 
     def mark_running(self, run_id: UUID) -> object | None:
         """Mark a queued research run as running."""
@@ -47,6 +66,27 @@ def enqueue_research_run(
 ) -> object:
     research_run_id = run_id or uuid4()
     return repository.create_pending_run(run_id=research_run_id, query=query)
+
+
+def retry_failed_research_run(
+    *,
+    run_id: UUID,
+    repository: ResearchRunRepository,
+    new_run_id: UUID | None = None,
+) -> object:
+    original_run = repository.get_by_id(run_id)
+    if original_run is None:
+        raise ResearchRunNotFoundError(run_id)
+
+    status = str(original_run.status)
+    if status != RESEARCH_STATUS_FAILED:
+        raise ResearchRunNotRetryableError(run_id=run_id, status=status)
+
+    return enqueue_research_run(
+        query=original_run.query,
+        repository=repository,
+        run_id=new_run_id,
+    )
 
 
 def execute_research_run(
