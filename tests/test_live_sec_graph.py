@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 from typing import Any
 
@@ -118,6 +119,12 @@ def _assert_agent_steps_contract(steps: list[dict[str, Any]]) -> None:
         assert step["node_name"].strip()
         assert isinstance(step.get("status"), str)
         assert step["status"].strip()
+        assert isinstance(step.get("started_at"), str)
+        assert datetime.fromisoformat(step["started_at"])
+        assert isinstance(step.get("completed_at"), str)
+        assert datetime.fromisoformat(step["completed_at"])
+        assert isinstance(step.get("duration_seconds"), int | float)
+        assert step["duration_seconds"] >= 0.0
 
 
 def _assert_sources_contract(sources: list[dict[str, Any]]) -> None:

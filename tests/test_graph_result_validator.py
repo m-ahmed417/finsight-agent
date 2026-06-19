@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from finsight_agent.app.services.graph_result_validator import (
@@ -38,6 +40,9 @@ def test_validate_graph_result_normalizes_contract_fields_without_mutating_input
                 "node_name": " fetch_sec_data ",
                 "status": " completed ",
                 "message": "Fetched SEC submissions and company facts.",
+                "started_at": "2026-06-16T13:00:00+00:00",
+                "completed_at": "2026-06-16T13:00:02+00:00",
+                "duration_seconds": 2.0,
                 "duration_ms": 125,
             }
         ],
@@ -79,6 +84,9 @@ def test_validate_graph_result_normalizes_contract_fields_without_mutating_input
             "node_name": "fetch_sec_data",
             "status": "completed",
             "message": "Fetched SEC submissions and company facts.",
+            "started_at": datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc),
+            "completed_at": datetime(2026, 6, 16, 13, 0, 2, tzinfo=timezone.utc),
+            "duration_seconds": 2.0,
             "duration_ms": 125,
         }
     ]

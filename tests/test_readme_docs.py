@@ -16,9 +16,14 @@ def test_readme_documents_background_research_polling_workflow() -> None:
         "completed",
         "failed",
         "GET /research/{run_id}",
+        "GET /research/{run_id}/progress",
         "GET /research/{run_id}/steps",
         "errors",
         "agent_steps",
+        "latest_step",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
     ]
     for phrase in required_phrases:
         assert phrase in section
@@ -73,6 +78,11 @@ def test_readme_documents_failed_research_retry_workflow() -> None:
         "Only failed research runs can be retried",
         "new queued run",
         "original failed run",
+        "retried_from_run_id",
+        "points to the original failed run",
+        "GET /research/{run_id}/retries",
+        "retry chain",
+        "creation order",
     ]:
         assert phrase in workflow_section
 
@@ -93,6 +103,20 @@ def test_readme_documents_research_run_listing_workflow() -> None:
         "status=failed",
         "limit=20",
         "1 and 100",
-        "same response shape",
+        "compact summaries",
+        "warnings_count",
+        "errors_count",
+        "has_report",
+        "next_cursor",
+        "has_more",
+        "cursor",
+        "Use `GET /research/{run_id}` for detailed fields",
+        '"items": [',
+        '"next_cursor":',
+        '"has_more": true',
+        '"warnings_count": 1',
+        '"errors_count": 0',
+        '"has_report": true',
+        "GET /research?status=failed&limit=20&cursor={next_cursor}",
     ]:
         assert phrase in workflow_section

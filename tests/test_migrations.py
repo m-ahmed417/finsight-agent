@@ -45,6 +45,7 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "ticker",
         "company_name",
         "status",
+        "retried_from_run_id",
         "compliance_status",
         "report_quality_status",
         "final_report",
@@ -68,5 +69,8 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "status",
         "message",
         "error_message",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
         "created_at",
     }.issubset(agent_step_columns)

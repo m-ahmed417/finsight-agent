@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime, timezone
 import re
 from typing import Any
@@ -51,18 +52,39 @@ def build_research_graph(
 ):
     graph = StateGraph(FinSightState)
 
-    graph.add_node("initialize", _initialize_state)
-    graph.add_node("resolve_company", _make_resolve_company_node(resolver))
-    graph.add_node("fetch_sec_data", _make_fetch_sec_data_node(sec_client))
-    graph.add_node("identify_filings", _identify_filings)
-    graph.add_node("fetch_filing_text", _make_fetch_filing_text_node(sec_client))
-    graph.add_node("analyze_risks", _make_analyze_risks_node(llm_client))
-    graph.add_node("extract_metrics", _extract_metrics)
-    graph.add_node("synthesize_research", _synthesize_research)
-    graph.add_node("draft_report", _make_draft_report_node(llm_client))
-    graph.add_node("generate_report", _generate_report)
-    graph.add_node("compliance_check", _compliance_check)
-    graph.add_node("validate_report", _validate_report)
+    graph.add_node("initialize", _timed_node("initialize", _initialize_state))
+    graph.add_node(
+        "resolve_company",
+        _timed_node("resolve_company", _make_resolve_company_node(resolver)),
+    )
+    graph.add_node(
+        "fetch_sec_data",
+        _timed_node("fetch_sec_data", _make_fetch_sec_data_node(sec_client)),
+    )
+    graph.add_node("identify_filings", _timed_node("identify_filings", _identify_filings))
+    graph.add_node(
+        "fetch_filing_text",
+        _timed_node("fetch_filing_text", _make_fetch_filing_text_node(sec_client)),
+    )
+    graph.add_node(
+        "analyze_risks",
+        _timed_node("analyze_risks", _make_analyze_risks_node(llm_client)),
+    )
+    graph.add_node("extract_metrics", _timed_node("extract_metrics", _extract_metrics))
+    graph.add_node(
+        "synthesize_research",
+        _timed_node("synthesize_research", _synthesize_research),
+    )
+    graph.add_node(
+        "draft_report",
+        _timed_node("draft_report", _make_draft_report_node(llm_client)),
+    )
+    graph.add_node("generate_report", _timed_node("generate_report", _generate_report))
+    graph.add_node(
+        "compliance_check",
+        _timed_node("compliance_check", _compliance_check),
+    )
+    graph.add_node("validate_report", _timed_node("validate_report", _validate_report))
 
     graph.set_entry_point("initialize")
     graph.add_edge("initialize", "resolve_company")
@@ -128,6 +150,77 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "sources": state.get("sources", []),
         "warnings": state.get("warnings", []),
         "errors": state.get("errors", []),
+    }
+
+
+def _timed_node(
+    node_name: str,
+    node: Callable[[FinSightState], FinSightState],
+) -> Callable[[FinSightState], FinSightState]:
+    def wrapped(state: FinSightState) -> FinSightState:
+        started_at = datetime.now(timezone.utc)
+        updates = node(state)
+        completed_at = datetime.now(timezone.utc)
+        return _annotate_new_agent_steps(
+            state,
+            updates,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    wrapped.__name__ = f"timed_{node_name}"
+    return wrapped
+
+
+def _annotate_new_agent_steps(
+    state: FinSightState,
+    updates: FinSightState,
+    *,
+    started_at: datetime,
+    completed_at: datetime,
+) -> FinSightState:
+    steps = updates.get("agent_steps")
+    if not isinstance(steps, list):
+        return updates
+
+    previous_step_count = len(state.get("agent_steps", []))
+    if len(steps) <= previous_step_count:
+        return updates
+
+    duration_seconds = max((completed_at - started_at).total_seconds(), 0.0)
+    started_at_text = started_at.isoformat()
+    completed_at_text = completed_at.isoformat()
+    timed_steps = [
+        (
+            _annotate_step_timing(
+                step,
+                started_at=started_at_text,
+                completed_at=completed_at_text,
+                duration_seconds=duration_seconds,
+            )
+            if index >= previous_step_count and isinstance(step, dict)
+            else step
+        )
+        for index, step in enumerate(steps)
+    ]
+    return {**updates, "agent_steps": timed_steps}
+
+
+def _annotate_step_timing(
+    step: dict[str, Any],
+    *,
+    started_at: str,
+    completed_at: str,
+    duration_seconds: float,
+) -> dict[str, Any]:
+    step_duration = step.get("duration_seconds")
+    return {
+        **step,
+        "started_at": step.get("started_at") or started_at,
+        "completed_at": step.get("completed_at") or completed_at,
+        "duration_seconds": (
+            duration_seconds if step_duration is None else step_duration
+        ),
     }
 
 

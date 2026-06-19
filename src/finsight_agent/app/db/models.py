@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -20,6 +20,7 @@ class ResearchRun(Base):
     ticker: Mapped[str | None] = mapped_column(String(20), nullable=True)
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
+    retried_from_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     compliance_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     report_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -56,6 +57,15 @@ class AgentStep(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

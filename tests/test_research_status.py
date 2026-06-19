@@ -1,6 +1,6 @@
 from typing import get_args
 
-from finsight_agent.app.api.schemas import ResearchResponse
+from finsight_agent.app.api.schemas import ResearchResponse, ResearchRunSummary
 from finsight_agent.app.research_status import (
     IN_PROGRESS_RESEARCH_STATUSES,
     RESEARCH_STATUS_COMPLETED,
@@ -31,5 +31,8 @@ def test_research_status_constants_define_api_lifecycle_contract() -> None:
 def test_research_response_status_uses_shared_lifecycle_contract() -> None:
     assert get_args(ResearchStatus) == RESEARCH_STATUSES
     assert get_args(ResearchResponse.model_fields["status"].annotation) == (
+        RESEARCH_STATUSES
+    )
+    assert get_args(ResearchRunSummary.model_fields["status"].annotation) == (
         RESEARCH_STATUSES
     )

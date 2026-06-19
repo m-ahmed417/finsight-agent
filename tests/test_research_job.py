@@ -41,9 +41,25 @@ class FakeRepository:
         self.failed_graph_updates: list[dict] = []
         self.failed_updates: list[dict] = []
 
-    def create_pending_run(self, *, run_id: UUID, query: str) -> SimpleNamespace:
-        self.pending_runs.append({"run_id": run_id, "query": query})
-        run = SimpleNamespace(id=str(run_id), query=query, status="queued")
+    def create_pending_run(
+        self,
+        *,
+        run_id: UUID,
+        query: str,
+        retried_from_run_id: UUID | None = None,
+    ) -> SimpleNamespace:
+        pending_run = {"run_id": run_id, "query": query}
+        if retried_from_run_id is not None:
+            pending_run["retried_from_run_id"] = retried_from_run_id
+        self.pending_runs.append(pending_run)
+        run = SimpleNamespace(
+            id=str(run_id),
+            query=query,
+            status="queued",
+            retried_from_run_id=(
+                str(retried_from_run_id) if retried_from_run_id is not None else None
+            ),
+        )
         self.runs[run_id] = run
         return run
 
@@ -93,7 +109,30 @@ def test_enqueue_research_run_creates_pending_run_with_provided_id() -> None:
     assert repository.pending_runs == [{"run_id": run_id, "query": "AAPL"}]
 
 
-def test_retry_failed_research_run_creates_new_queued_run_from_original_query() -> None:
+def test_enqueue_research_run_can_record_retry_lineage() -> None:
+    repository = FakeRepository()
+    run_id = uuid4()
+    original_run_id = uuid4()
+
+    run = enqueue_research_run(
+        query="AAPL",
+        repository=repository,
+        run_id=run_id,
+        retried_from_run_id=original_run_id,
+    )
+
+    assert run.id == str(run_id)
+    assert run.retried_from_run_id == str(original_run_id)
+    assert repository.pending_runs == [
+        {
+            "run_id": run_id,
+            "query": "AAPL",
+            "retried_from_run_id": original_run_id,
+        }
+    ]
+
+
+def test_retry_failed_research_run_creates_new_queued_run_with_retry_lineage() -> None:
     repository = FakeRepository()
     original_run_id = uuid4()
     retry_run_id = uuid4()
@@ -112,7 +151,14 @@ def test_retry_failed_research_run_creates_new_queued_run_from_original_query() 
     assert retried_run.id == str(retry_run_id)
     assert retried_run.query == "AAPL"
     assert retried_run.status == "queued"
-    assert repository.pending_runs == [{"run_id": retry_run_id, "query": "AAPL"}]
+    assert retried_run.retried_from_run_id == str(original_run_id)
+    assert repository.pending_runs == [
+        {
+            "run_id": retry_run_id,
+            "query": "AAPL",
+            "retried_from_run_id": original_run_id,
+        }
+    ]
     assert repository.runs[original_run_id].status == "failed"
 
 

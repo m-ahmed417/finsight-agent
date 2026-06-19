@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
@@ -24,15 +25,30 @@ STALE_RESEARCH_RUN_ERROR = {
 }
 
 
+@dataclass(frozen=True)
+class ResearchRunListCursor:
+    created_at: datetime
+    run_id: str
+
+
 class ResearchRunRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def create_pending_run(self, *, run_id: UUID, query: str) -> ResearchRun:
+    def create_pending_run(
+        self,
+        *,
+        run_id: UUID,
+        query: str,
+        retried_from_run_id: UUID | None = None,
+    ) -> ResearchRun:
         run = ResearchRun(
             id=str(run_id),
             query=query,
             status=RESEARCH_STATUS_QUEUED,
+            retried_from_run_id=(
+                str(retried_from_run_id) if retried_from_run_id is not None else None
+            ),
             risk_factors_json=[],
             risk_themes_json=[],
             warnings_json=[],
@@ -137,6 +153,7 @@ class ResearchRunRepository:
         *,
         status: str | None = None,
         limit: int = 20,
+        before: ResearchRunListCursor | None = None,
     ) -> list[ResearchRun]:
         if limit <= 0:
             return []
@@ -147,8 +164,45 @@ class ResearchRunRepository:
         )
         if status is not None:
             statement = statement.where(ResearchRun.status == status)
+        if before is not None:
+            statement = statement.where(
+                or_(
+                    ResearchRun.created_at < before.created_at,
+                    and_(
+                        ResearchRun.created_at == before.created_at,
+                        ResearchRun.id < before.run_id,
+                    ),
+                )
+            )
 
         return list(self._session.scalars(statement.limit(limit)))
+
+    def list_retry_chain(self, run_id: UUID) -> list[ResearchRun]:
+        run = self.get_by_id(run_id)
+        if run is None:
+            return []
+
+        root_run = self._find_retry_root(run)
+        chain_by_id = {root_run.id: root_run}
+        frontier_ids = {root_run.id}
+        while frontier_ids:
+            statement = (
+                select(ResearchRun)
+                .where(ResearchRun.retried_from_run_id.in_(frontier_ids))
+                .order_by(ResearchRun.created_at, ResearchRun.id)
+            )
+            children = [
+                child
+                for child in self._session.scalars(statement)
+                if child.id not in chain_by_id
+            ]
+            frontier_ids = {child.id for child in children}
+            chain_by_id.update({child.id: child for child in children})
+
+        return sorted(
+            chain_by_id.values(),
+            key=lambda chain_run: (chain_run.created_at, chain_run.id),
+        )
 
     def _mark_from_graph_result(
         self,
@@ -198,6 +252,17 @@ class ResearchRunRepository:
         )
         return list(self._session.scalars(statement))
 
+    def _find_retry_root(self, run: ResearchRun) -> ResearchRun:
+        root_run = run
+        seen_ids = {root_run.id}
+        while root_run.retried_from_run_id is not None:
+            parent_run = self._session.get(ResearchRun, root_run.retried_from_run_id)
+            if parent_run is None or parent_run.id in seen_ids:
+                break
+            root_run = parent_run
+            seen_ids.add(root_run.id)
+        return root_run
+
     def _replace_agent_steps(self, run_id: UUID, steps: list[dict]) -> None:
         statement = delete(AgentStep).where(AgentStep.research_run_id == str(run_id))
         self._session.execute(statement)
@@ -212,6 +277,9 @@ class ResearchRunRepository:
                     status=step["status"],
                     message=step.get("message"),
                     error_message=step.get("error_message"),
+                    started_at=step.get("started_at"),
+                    completed_at=step.get("completed_at"),
+                    duration_seconds=step.get("duration_seconds"),
                 )
             )
 

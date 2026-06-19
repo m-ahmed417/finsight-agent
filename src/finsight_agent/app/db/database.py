@@ -25,6 +25,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_research_run_columns()
+    _ensure_sqlite_agent_step_columns()
 
 
 def get_db_session() -> Iterator[Session]:
@@ -46,6 +47,7 @@ def _ensure_sqlite_research_run_columns() -> None:
     column_definitions = {
         "compliance_status": "VARCHAR(30)",
         "report_quality_status": "VARCHAR(30)",
+        "retried_from_run_id": "VARCHAR(36)",
         "filing_text_excerpt": "TEXT",
         "risk_factors_json": "JSON NOT NULL DEFAULT '[]'",
         "risk_themes_json": "JSON NOT NULL DEFAULT '[]'",
@@ -57,5 +59,28 @@ def _ensure_sqlite_research_run_columns() -> None:
                 connection.execute(
                     text(
                         f"ALTER TABLE research_runs ADD COLUMN {column_name} {column_definition}"
+                    )
+                )
+
+
+def _ensure_sqlite_agent_step_columns() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    existing_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("agent_steps")
+    }
+    column_definitions = {
+        "started_at": "DATETIME",
+        "completed_at": "DATETIME",
+        "duration_seconds": "FLOAT",
+    }
+    with engine.begin() as connection:
+        for column_name, column_definition in column_definitions.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE agent_steps ADD COLUMN {column_name} {column_definition}"
                     )
                 )

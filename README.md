@@ -45,6 +45,7 @@ The response includes a `run_id`, the original query, and `status="queued"`:
 ```json
 {
   "run_id": "00000000-0000-0000-0000-000000000001",
+  "retried_from_run_id": null,
   "query": "AAPL",
   "status": "queued",
   "created_at": "2026-06-16T13:00:00Z",
@@ -72,10 +73,47 @@ List recent runs:
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/research?status=failed&limit=20"
 ```
 
-`GET /research` returns recent runs in newest-first order using the same response shape
-as `GET /research/{run_id}`. Use `status=failed` to filter by a single lifecycle
-status. Use `limit=20` to control how many runs are returned; the API accepts
-limits between 1 and 100.
+`GET /research` returns recent runs in newest-first order as compact summaries.
+Summaries include lifecycle fields plus `warnings_count`, `errors_count`, and
+`has_report` so clients can scan runs without downloading full reports, metrics,
+sources, or diagnostic payloads. Use `GET /research/{run_id}` for detailed fields.
+Use `status=failed` to filter by a single lifecycle status. Use `limit=20` to
+control how many runs are returned; the API accepts limits between 1 and 100.
+When `has_more` is `true`, pass the returned `next_cursor` as `cursor` on the
+next request to fetch the following page.
+
+Example list response:
+
+```json
+{
+  "items": [
+    {
+      "run_id": "00000000-0000-0000-0000-000000000002",
+      "retried_from_run_id": null,
+      "query": "AAPL",
+      "status": "completed",
+      "created_at": "2026-06-16T13:00:00Z",
+      "completed_at": "2026-06-16T13:02:30Z",
+      "duration_seconds": 150.0,
+      "ticker": "AAPL",
+      "company_name": "Apple Inc.",
+      "warnings_count": 1,
+      "errors_count": 0,
+      "has_report": true
+    }
+  ],
+  "next_cursor": "opaque-cursor",
+  "has_more": true
+}
+```
+
+Fetch the next page:
+
+`GET /research?status=failed&limit=20&cursor={next_cursor}`
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research?status=failed&limit=20&cursor={next_cursor}"
+```
 
 Research run statuses are:
 
@@ -102,6 +140,18 @@ or `running` run older than `RESEARCH_RUN_STALE_AFTER_SECONDS` is marked
 `failed` with a structured `research_run_stale` error so polling clients do not
 wait forever on abandoned background work.
 
+Fetch stored workflow progress:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/progress"
+```
+
+`GET /research/{run_id}/progress` returns a compact progress summary built from
+the stored `agent_steps`: `total_steps`, `completed_steps`, `failed_steps`,
+`latest_step`, `workflow_started_at`, `workflow_completed_at`, and
+`workflow_duration_seconds`. It is intended for polling UIs that need the latest
+stored workflow position without downloading the full audit trail.
+
 Retry a failed run:
 
 ```powershell
@@ -111,9 +161,20 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/research/{run_id}/ret
 `POST /research/{run_id}/retry` only retries runs whose current status is
 `failed`. A successful retry returns `202 Accepted` with a new queued run using
 the original query. The original failed run is preserved for audit history, and
-the retry response contains a different `run_id` for the new queued run. Unknown
-run IDs return `404`. Runs that are still `queued` or `running`, or already
-`completed`, return `409` with `Only failed research runs can be retried`.
+the retry response contains a different `run_id` for the new queued run. Its
+`retried_from_run_id` points to the original failed run. Unknown run IDs return
+`404`. Runs that are still `queued` or `running`, or already `completed`, return
+`409` with `Only failed research runs can be retried`.
+
+Fetch the retry chain for any run in a retry family:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/retries"
+```
+
+`GET /research/{run_id}/retries` returns the original run and its retry chain in
+creation order using the same response shape as `GET /research/{run_id}`.
+Unknown run IDs return `404`.
 
 Fetch the persisted audit trail:
 
@@ -122,7 +183,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/steps"
 ```
 
 `GET /research/{run_id}/steps` returns the stored `agent_steps` as records with
-`node_name`, `status`, `message`, and `error_message` fields.
+`node_name`, `status`, `message`, `error_message`, `started_at`, `completed_at`,
+and `duration_seconds` fields. Workflow-generated steps populate UTC timing
+metadata; timing fields remain nullable so older or partial workflow steps can
+still be returned without inventing execution timings.
 
 ## Configuration
 

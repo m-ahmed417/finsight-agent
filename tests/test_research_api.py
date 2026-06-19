@@ -26,9 +26,23 @@ class FakeResearchRepository:
         self.list_recent_calls: list[dict] = []
         self.runs: dict[UUID, SimpleNamespace] = {}
 
-    def create_pending_run(self, *, run_id: UUID, query: str) -> SimpleNamespace:
-        self.pending_runs.append({"run_id": run_id, "query": query})
-        run = _make_run(run_id=run_id, query=query, status="queued")
+    def create_pending_run(
+        self,
+        *,
+        run_id: UUID,
+        query: str,
+        retried_from_run_id: UUID | None = None,
+    ) -> SimpleNamespace:
+        pending_run = {"run_id": run_id, "query": query}
+        if retried_from_run_id is not None:
+            pending_run["retried_from_run_id"] = retried_from_run_id
+        self.pending_runs.append(pending_run)
+        run = _make_run(
+            run_id=run_id,
+            query=query,
+            status="queued",
+            retried_from_run_id=retried_from_run_id,
+        )
         self.runs[run_id] = run
         return run
 
@@ -87,17 +101,57 @@ class FakeResearchRepository:
         *,
         status: str | None = None,
         limit: int = 20,
+        before: object | None = None,
     ) -> list[SimpleNamespace]:
-        self.list_recent_calls.append({"status": status, "limit": limit})
+        self.list_recent_calls.append(
+            {"status": status, "limit": limit, "before": before}
+        )
         runs = list(self.runs.values())
         if status is not None:
             runs = [run for run in runs if run.status == status]
+        if before is not None:
+            runs = [
+                run
+                for run in runs
+                if (run.created_at, run.id) < (before.created_at, before.run_id)
+            ]
 
         return sorted(
             runs,
             key=lambda run: (run.created_at, run.id),
             reverse=True,
         )[:limit]
+
+    def list_retry_chain(self, run_id: UUID) -> list[SimpleNamespace]:
+        run = self.runs.get(run_id)
+        if run is None:
+            return []
+
+        root = run
+        seen_ids = {root.id}
+        while root.retried_from_run_id is not None:
+            parent = self.runs.get(UUID(root.retried_from_run_id))
+            if parent is None or parent.id in seen_ids:
+                break
+            root = parent
+            seen_ids.add(root.id)
+
+        chain_by_id = {root.id: root}
+        frontier = {root.id}
+        while frontier:
+            children = [
+                candidate
+                for candidate in self.runs.values()
+                if candidate.retried_from_run_id in frontier
+                and candidate.id not in chain_by_id
+            ]
+            frontier = {child.id for child in children}
+            chain_by_id.update({child.id: child for child in children})
+
+        return sorted(
+            chain_by_id.values(),
+            key=lambda chain_run: (chain_run.created_at, chain_run.id),
+        )
 
     def get_steps_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
         run = self.runs.get(run_id)
@@ -111,6 +165,9 @@ class FakeResearchRepository:
                 status=step["status"],
                 message=step.get("message"),
                 error_message=step.get("error_message"),
+                started_at=step.get("started_at"),
+                completed_at=step.get("completed_at"),
+                duration_seconds=step.get("duration_seconds"),
             )
             for index, step in enumerate(run.agent_steps, start=1)
         ]
@@ -128,6 +185,11 @@ class FakeResearchRepository:
             query=existing.query,
             status=status,
             graph_result=graph_result,
+            retried_from_run_id=(
+                UUID(existing.retried_from_run_id)
+                if existing.retried_from_run_id is not None
+                else None
+            ),
         )
         self.runs[run_id] = run
         return run
@@ -170,12 +232,16 @@ def _make_run(
     status: str,
     graph_result: dict | None = None,
     created_at: datetime = DEFAULT_CREATED_AT,
+    retried_from_run_id: UUID | None = None,
 ) -> SimpleNamespace:
     result = graph_result or {}
     return SimpleNamespace(
         id=str(run_id),
         query=query,
         status=status,
+        retried_from_run_id=(
+            str(retried_from_run_id) if retried_from_run_id is not None else None
+        ),
         created_at=created_at,
         completed_at=(
             DEFAULT_COMPLETED_AT if status in {"completed", "failed"} else None
@@ -222,6 +288,7 @@ def test_post_research_queues_run_and_schedules_background_job(
     run_id = UUID(body["run_id"])
     assert body["query"] == "AAPL"
     assert body["status"] == "queued"
+    assert body["retried_from_run_id"] is None
     assert body["ticker"] is None
     assert body["company_name"] is None
     assert body["report"] is None
@@ -251,6 +318,23 @@ def test_get_research_lists_recent_runs_newest_first_with_limit(
         query="MSFT",
         status="failed",
         created_at=DEFAULT_CREATED_AT,
+        graph_result={
+            "ticker": "MSFT",
+            "company_name": "Microsoft Corporation",
+            "final_report": "# FinSight Research Brief: Microsoft Corporation (MSFT)",
+            "warnings": [
+                {
+                    "code": "report_quality_warning",
+                    "message": "Report completed with warnings.",
+                }
+            ],
+            "errors": [
+                {
+                    "code": "research_run_failed",
+                    "message": "Research run failed.",
+                }
+            ],
+        },
     )
     repository.runs[middle_id] = _make_run(
         run_id=middle_id,
@@ -264,10 +348,23 @@ def test_get_research_lists_recent_runs_newest_first_with_limit(
 
     assert response.status_code == 200
     body = response.json()
-    assert [run["run_id"] for run in body] == [str(newest_id), str(middle_id)]
-    assert [run["query"] for run in body] == ["MSFT", "NVDA"]
-    assert str(oldest_id) not in [run["run_id"] for run in body]
-    assert repository.list_recent_calls == [{"status": None, "limit": 2}]
+    assert body["has_more"] is True
+    assert body["next_cursor"] is not None
+    assert [run["run_id"] for run in body["items"]] == [
+        str(newest_id),
+        str(middle_id),
+    ]
+    assert [run["query"] for run in body["items"]] == ["MSFT", "NVDA"]
+    assert body["items"][0]["ticker"] == "MSFT"
+    assert body["items"][0]["company_name"] == "Microsoft Corporation"
+    assert body["items"][0]["warnings_count"] == 1
+    assert body["items"][0]["errors_count"] == 1
+    assert body["items"][0]["has_report"] is True
+    assert_summary_excludes_detail_fields(body["items"][0])
+    assert str(oldest_id) not in [run["run_id"] for run in body["items"]]
+    assert repository.list_recent_calls == [
+        {"status": None, "limit": 3, "before": None}
+    ]
 
 
 def test_get_research_lists_recent_runs_filtered_by_status(
@@ -294,6 +391,19 @@ def test_get_research_lists_recent_runs_filtered_by_status(
         query="NVDA",
         status="failed",
         created_at=DEFAULT_CREATED_AT,
+        graph_result={
+            "errors": [
+                {
+                    "code": "research_run_failed",
+                    "message": "Research run failed.",
+                },
+                {
+                    "code": "company_not_found",
+                    "message": "Could not confidently resolve the company.",
+                },
+            ],
+            "warnings": [],
+        },
     )
     app.dependency_overrides[get_research_repository] = lambda: repository
 
@@ -301,13 +411,95 @@ def test_get_research_lists_recent_runs_filtered_by_status(
 
     assert response.status_code == 200
     body = response.json()
-    assert [run["run_id"] for run in body] == [
+    assert body["has_more"] is False
+    assert body["next_cursor"] is None
+    assert [run["run_id"] for run in body["items"]] == [
         str(newer_failed_id),
         str(older_failed_id),
     ]
-    assert [run["status"] for run in body] == ["failed", "failed"]
-    assert str(completed_id) not in [run["run_id"] for run in body]
-    assert repository.list_recent_calls == [{"status": "failed", "limit": 10}]
+    assert [run["status"] for run in body["items"]] == ["failed", "failed"]
+    assert body["items"][0]["warnings_count"] == 0
+    assert body["items"][0]["errors_count"] == 2
+    assert body["items"][0]["has_report"] is False
+    assert_summary_excludes_detail_fields(body["items"][0])
+    assert str(completed_id) not in [run["run_id"] for run in body["items"]]
+    assert repository.list_recent_calls == [
+        {"status": "failed", "limit": 11, "before": None}
+    ]
+
+
+def test_get_research_list_uses_cursor_for_next_page(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    newest_id = uuid4()
+    middle_id = uuid4()
+    oldest_id = uuid4()
+    repository.runs[newest_id] = _make_run(
+        run_id=newest_id,
+        query="AAPL",
+        status="completed",
+        created_at=DEFAULT_CREATED_AT,
+    )
+    repository.runs[middle_id] = _make_run(
+        run_id=middle_id,
+        query="MSFT",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=1),
+    )
+    repository.runs[oldest_id] = _make_run(
+        run_id=oldest_id,
+        query="NVDA",
+        status="queued",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=2),
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    first_response = client.get("/research?limit=2")
+    next_cursor = first_response.json()["next_cursor"]
+    second_response = client.get(f"/research?limit=2&cursor={next_cursor}")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert [run["run_id"] for run in first_response.json()["items"]] == [
+        str(newest_id),
+        str(middle_id),
+    ]
+    assert first_response.json()["has_more"] is True
+    assert next_cursor is not None
+    assert second_response.json()["items"] == [
+        {
+            "run_id": str(oldest_id),
+            "retried_from_run_id": None,
+            "query": "NVDA",
+            "status": "queued",
+            "created_at": (
+                DEFAULT_CREATED_AT - timedelta(hours=2)
+            ).isoformat().replace("+00:00", "Z"),
+            "completed_at": None,
+            "duration_seconds": None,
+            "ticker": None,
+            "company_name": None,
+            "warnings_count": 0,
+            "errors_count": 0,
+            "has_report": False,
+        }
+    ]
+    assert second_response.json()["has_more"] is False
+    assert second_response.json()["next_cursor"] is None
+    assert repository.list_recent_calls[1]["before"] is not None
+    assert repository.list_recent_calls[1]["before"].run_id == str(middle_id)
+
+
+def test_get_research_list_rejects_invalid_cursor(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get("/research?cursor=not-a-valid-cursor")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Invalid research list cursor."
+    assert repository.list_recent_calls == []
 
 
 def test_get_research_list_rejects_invalid_status(client: TestClient) -> None:
@@ -504,12 +696,84 @@ def test_post_research_retry_creates_new_queued_run_from_failed_run(
     assert retry_run_id != failed_run_id
     assert body["query"] == "AAPL"
     assert body["status"] == "queued"
+    assert body["retried_from_run_id"] == str(failed_run_id)
     assert body["completed_at"] is None
     assert body["duration_seconds"] is None
     assert body["errors"] == []
     assert repository.runs[failed_run_id].status == "failed"
-    assert repository.pending_runs == [{"run_id": retry_run_id, "query": "AAPL"}]
+    assert repository.pending_runs == [
+        {
+            "run_id": retry_run_id,
+            "query": "AAPL",
+            "retried_from_run_id": failed_run_id,
+        }
+    ]
     assert job_executor.invocations == [{"run_id": retry_run_id, "query": "AAPL"}]
+
+
+def test_get_research_retries_returns_retry_chain_from_any_run(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    original_id = uuid4()
+    first_retry_id = uuid4()
+    second_retry_id = uuid4()
+    unrelated_id = uuid4()
+    repository.runs[original_id] = _make_run(
+        run_id=original_id,
+        query="AAPL",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=3),
+    )
+    repository.runs[first_retry_id] = _make_run(
+        run_id=first_retry_id,
+        query="AAPL",
+        status="failed",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=2),
+        retried_from_run_id=original_id,
+    )
+    repository.runs[second_retry_id] = _make_run(
+        run_id=second_retry_id,
+        query="AAPL",
+        status="queued",
+        created_at=DEFAULT_CREATED_AT - timedelta(hours=1),
+        retried_from_run_id=first_retry_id,
+    )
+    repository.runs[unrelated_id] = _make_run(
+        run_id=unrelated_id,
+        query="MSFT",
+        status="queued",
+        created_at=DEFAULT_CREATED_AT,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{first_retry_id}/retries")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [run["run_id"] for run in body] == [
+        str(original_id),
+        str(first_retry_id),
+        str(second_retry_id),
+    ]
+    assert [run["retried_from_run_id"] for run in body] == [
+        None,
+        str(original_id),
+        str(first_retry_id),
+    ]
+    assert str(unrelated_id) not in [run["run_id"] for run in body]
+
+
+def test_get_research_retries_returns_404_for_unknown_run_id(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{uuid4()}/retries")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Research run not found."
 
 
 def test_post_research_retry_returns_404_for_unknown_run_id(
@@ -716,6 +980,17 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
                 "node_name": "resolve_company",
                 "status": "completed",
                 "message": "Resolved AAPL to Apple Inc.",
+                "started_at": datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc),
+                "completed_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    2,
+                    tzinfo=timezone.utc,
+                ),
+                "duration_seconds": 2.0,
             },
             {
                 "node_name": "fetch_sec_data",
@@ -744,6 +1019,9 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
             "status": "completed",
             "message": "Resolved AAPL to Apple Inc.",
             "error_message": None,
+            "started_at": "2026-06-16T13:00:00Z",
+            "completed_at": "2026-06-16T13:00:02Z",
+            "duration_seconds": 2.0,
         },
         {
             "id": 2,
@@ -752,8 +1030,124 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
             "status": "completed",
             "message": "Fetched SEC submissions and company facts.",
             "error_message": None,
+            "started_at": None,
+            "completed_at": None,
+            "duration_seconds": None,
         },
     ]
+
+
+def test_get_research_progress_returns_stored_step_summary(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "financial_metrics": {"periods": []},
+        "warnings": [],
+        "errors": [],
+        "sources": [],
+        "agent_steps": [
+            {
+                "node_name": "resolve_company",
+                "status": "completed",
+                "message": "Resolved AAPL to Apple Inc.",
+                "started_at": datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc),
+                "completed_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                "duration_seconds": 1.0,
+            },
+            {
+                "node_name": "fetch_sec_data",
+                "status": "completed",
+                "message": "Fetched SEC submissions and company facts.",
+                "started_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                "completed_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    3,
+                    tzinfo=timezone.utc,
+                ),
+                "duration_seconds": 2.0,
+            },
+        ],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+    response = client.get(f"/research/{run_id}/progress")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": run_id,
+        "status": "completed",
+        "total_steps": 2,
+        "completed_steps": 2,
+        "failed_steps": 0,
+        "workflow_started_at": "2026-06-16T13:00:00Z",
+        "workflow_completed_at": "2026-06-16T13:00:03Z",
+        "workflow_duration_seconds": 3.0,
+        "latest_step": {
+            "id": 2,
+            "research_run_id": run_id,
+            "node_name": "fetch_sec_data",
+            "status": "completed",
+            "message": "Fetched SEC submissions and company facts.",
+            "error_message": None,
+            "started_at": "2026-06-16T13:00:01Z",
+            "completed_at": "2026-06-16T13:00:03Z",
+            "duration_seconds": 2.0,
+        },
+    }
+
+
+def test_get_research_progress_returns_empty_summary_for_queued_run(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    job_executor = FakeResearchJobExecutor(repository=repository)
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+    response = client.get(f"/research/{run_id}/progress")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": run_id,
+        "status": "queued",
+        "total_steps": 0,
+        "completed_steps": 0,
+        "failed_steps": 0,
+        "workflow_started_at": None,
+        "workflow_completed_at": None,
+        "workflow_duration_seconds": None,
+        "latest_step": None,
+    }
 
 
 def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
@@ -766,19 +1160,31 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     list_response_schema = openapi["paths"]["/research"]["get"]["responses"]["200"][
         "content"
     ]["application/json"]["schema"]
+    list_operation = openapi["paths"]["/research"]["get"]
     post_response_schema = openapi["paths"]["/research"]["post"]["responses"]["202"][
         "content"
     ]["application/json"]["schema"]
     steps_response_schema = openapi["paths"]["/research/{run_id}/steps"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
+    progress_response_schema = openapi["paths"]["/research/{run_id}/progress"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"]
     retry_response_schema = openapi["paths"]["/research/{run_id}/retry"]["post"][
         "responses"
     ]["202"]["content"]["application/json"]["schema"]
+    retry_chain_response_schema = openapi["paths"]["/research/{run_id}/retries"][
+        "get"
+    ]["responses"]["200"]["content"]["application/json"]["schema"]
 
-    assert list_response_schema["items"]["$ref"] == "#/components/schemas/ResearchResponse"
+    assert list_response_schema["$ref"] == "#/components/schemas/ResearchRunListResponse"
+    assert "compact" in list_operation["summary"].lower()
+    assert "paginated" in list_operation["description"].lower()
     assert post_response_schema["$ref"] == "#/components/schemas/ResearchResponse"
     assert retry_response_schema["$ref"] == "#/components/schemas/ResearchResponse"
+    assert retry_chain_response_schema["items"]["$ref"] == (
+        "#/components/schemas/ResearchResponse"
+    )
     assert research_properties["status"]["enum"] == [
         "queued",
         "running",
@@ -788,6 +1194,8 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     assert_openapi_datetime_property(research_properties["created_at"])
     assert_openapi_datetime_property(research_properties["completed_at"])
     assert_openapi_number_property(research_properties["duration_seconds"])
+    assert_openapi_uuid_property(research_properties["retried_from_run_id"])
+    assert "retry" in research_properties["retried_from_run_id"]["description"].lower()
     assert "polling" in research_properties["status"]["description"].lower()
     assert research_properties["warnings"]["items"]["$ref"] == (
         "#/components/schemas/ResearchWarning"
@@ -801,8 +1209,20 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     assert steps_response_schema["items"]["$ref"] == (
         "#/components/schemas/AgentStepResponse"
     )
+    assert progress_response_schema["$ref"] == (
+        "#/components/schemas/ResearchProgressResponse"
+    )
     assert schemas["AgentStepResponse"]["properties"]["node_name"]["type"] == "string"
     assert schemas["AgentStepResponse"]["properties"]["status"]["type"] == "string"
+    assert_openapi_datetime_property(
+        schemas["AgentStepResponse"]["properties"]["started_at"]
+    )
+    assert_openapi_datetime_property(
+        schemas["AgentStepResponse"]["properties"]["completed_at"]
+    )
+    assert_openapi_number_property(
+        schemas["AgentStepResponse"]["properties"]["duration_seconds"]
+    )
     source_properties = schemas["SourceMetadata"]["properties"]
     assert {
         "cache_status",
@@ -822,8 +1242,55 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
         "SourceMetadata",
         "ResearchWarning",
         "ResearchError",
+        "ResearchRunListResponse",
+        "ResearchRunSummary",
+        "ResearchProgressResponse",
         "AgentStepResponse",
     }.issubset(schemas)
+    progress_properties = schemas["ResearchProgressResponse"]["properties"]
+    assert {
+        "run_id",
+        "status",
+        "total_steps",
+        "completed_steps",
+        "failed_steps",
+        "latest_step",
+        "workflow_started_at",
+        "workflow_completed_at",
+        "workflow_duration_seconds",
+    }.issubset(progress_properties)
+    assert progress_properties["latest_step"]["anyOf"][0]["$ref"] == (
+        "#/components/schemas/AgentStepResponse"
+    )
+    assert_openapi_datetime_property(progress_properties["workflow_started_at"])
+    assert_openapi_datetime_property(progress_properties["workflow_completed_at"])
+    assert_openapi_number_property(progress_properties["workflow_duration_seconds"])
+    list_properties = schemas["ResearchRunListResponse"]["properties"]
+    assert list_properties["items"]["items"]["$ref"] == (
+        "#/components/schemas/ResearchRunSummary"
+    )
+    assert {"items", "next_cursor", "has_more"}.issubset(list_properties)
+    assert "compact" in list_properties["items"]["description"].lower()
+    assert "next page" in list_properties["next_cursor"]["description"].lower()
+    assert "another page" in list_properties["has_more"]["description"].lower()
+    summary_properties = schemas["ResearchRunSummary"]["properties"]
+    assert {
+        "run_id",
+        "retried_from_run_id",
+        "query",
+        "status",
+        "created_at",
+        "completed_at",
+        "duration_seconds",
+        "ticker",
+        "company_name",
+        "warnings_count",
+        "errors_count",
+        "has_report",
+    }.issubset(summary_properties)
+    assert "warning" in summary_properties["warnings_count"]["description"].lower()
+    assert "error" in summary_properties["errors_count"]["description"].lower()
+    assert "final report" in summary_properties["has_report"]["description"].lower()
 
 
 def test_get_research_returns_404_for_unknown_run_id(client: TestClient) -> None:
@@ -844,6 +1311,17 @@ def test_get_research_steps_returns_404_for_unknown_run_id(client: TestClient) -
     assert response.status_code == 404
 
 
+def test_get_research_progress_returns_404_for_unknown_run_id(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{uuid4()}/progress")
+
+    assert response.status_code == 404
+
+
 def assert_datetime_matches(value: str, expected: datetime) -> None:
     assert datetime.fromisoformat(value.replace("Z", "+00:00")) == expected
 
@@ -860,3 +1338,24 @@ def assert_openapi_number_property(schema: dict) -> None:
         return
 
     assert any(option.get("type") == "number" for option in schema.get("anyOf", []))
+
+
+def assert_openapi_uuid_property(schema: dict) -> None:
+    if schema.get("format") == "uuid":
+        return
+
+    assert any(option.get("format") == "uuid" for option in schema.get("anyOf", []))
+
+
+def assert_summary_excludes_detail_fields(summary: dict) -> None:
+    assert {
+        "report",
+        "financial_metrics",
+        "filing_text_excerpt",
+        "risk_factors",
+        "risk_themes",
+        "research_insights",
+        "warnings",
+        "errors",
+        "sources",
+    }.isdisjoint(summary)

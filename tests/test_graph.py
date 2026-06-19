@@ -221,6 +221,50 @@ def source_by_type(sources: list[dict], source_type: str) -> dict:
     return next(source for source in sources if source["source_type"] == source_type)
 
 
+def assert_agent_step(
+    result: dict,
+    *,
+    node_name: str,
+    status: str,
+    message: str,
+) -> dict:
+    step = next(
+        step for step in result["agent_steps"] if step["node_name"] == node_name
+    )
+    assert_step_matches(
+        step,
+        node_name=node_name,
+        status=status,
+        message=message,
+    )
+    return step
+
+
+def assert_step_matches(
+    step: dict,
+    *,
+    node_name: str,
+    status: str,
+    message: str,
+) -> None:
+    assert step["node_name"] == node_name
+    assert step["status"] == status
+    assert step["message"] == message
+    assert_step_has_timing(step)
+
+
+def assert_step_has_timing(step: dict) -> None:
+    started_at = datetime.fromisoformat(step["started_at"])
+    completed_at = datetime.fromisoformat(step["completed_at"])
+    assert started_at.tzinfo is not None
+    assert completed_at.tzinfo is not None
+    assert completed_at >= started_at
+    assert isinstance(step["duration_seconds"], int | float)
+    assert step["duration_seconds"] >= 0.0
+    computed_duration = (completed_at - started_at).total_seconds()
+    assert abs(computed_duration - step["duration_seconds"]) < 0.001
+
+
 def test_extract_metrics_does_not_mutate_existing_state_warnings() -> None:
     existing_warnings = [
         {
@@ -551,6 +595,8 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "validate_report",
     ]
     assert all(step["status"] == "completed" for step in result["agent_steps"])
+    for step in result["agent_steps"]:
+        assert_step_has_timing(step)
     assert result["errors"] == []
 
 
@@ -616,13 +662,13 @@ def test_research_graph_stops_when_company_is_not_found() -> None:
             "severity": "error",
         }
     ]
-    assert result["agent_steps"] == [
-        {
-            "node_name": "resolve_company",
-            "status": "failed",
-            "message": "Could not confidently resolve the company.",
-        }
-    ]
+    assert len(result["agent_steps"]) == 1
+    assert_agent_step(
+        result,
+        node_name="resolve_company",
+        status="failed",
+        message="Could not confidently resolve the company.",
+    )
 
 
 def test_research_graph_stops_when_company_is_ambiguous() -> None:
@@ -656,13 +702,13 @@ def test_research_graph_stops_when_company_is_ambiguous() -> None:
         },
     ]
     assert result["errors"][0]["code"] == "company_ambiguous"
-    assert result["agent_steps"] == [
-        {
-            "node_name": "resolve_company",
-            "status": "failed",
-            "message": "Multiple companies matched the query.",
-        }
-    ]
+    assert len(result["agent_steps"]) == 1
+    assert_agent_step(
+        result,
+        node_name="resolve_company",
+        status="failed",
+        message="Multiple companies matched the query.",
+    )
 
 
 def test_research_graph_records_sec_fetch_failure() -> None:
@@ -684,11 +730,12 @@ def test_research_graph_records_sec_fetch_failure() -> None:
             "severity": "error",
         }
     ]
-    assert result["agent_steps"][-1] == {
-        "node_name": "fetch_sec_data",
-        "status": "failed",
-        "message": "SEC unavailable",
-    }
+    assert_step_matches(
+        result["agent_steps"][-1],
+        node_name="fetch_sec_data",
+        status="failed",
+        message="SEC unavailable",
+    )
 
 
 def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
@@ -718,16 +765,18 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
         "severity": "warning",
         "details": {"reason": "Filing document unavailable"},
     } in result["warnings"]
-    assert {
-        "node_name": "fetch_filing_text",
-        "status": "completed",
-        "message": "Could not retrieve latest 10-K risk-factor text.",
-    } in result["agent_steps"]
-    assert {
-        "node_name": "analyze_risks",
-        "status": "completed",
-        "message": "Risk-factor text was unavailable for analysis.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="fetch_filing_text",
+        status="completed",
+        message="Could not retrieve latest 10-K risk-factor text.",
+    )
+    assert_agent_step(
+        result,
+        node_name="analyze_risks",
+        status="completed",
+        message="Risk-factor text was unavailable for analysis.",
+    )
     assert result["errors"] == []
 
 
@@ -763,20 +812,22 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
             "source_ids": ["latest_10k"],
         }
     ]
-    assert {
-        "node_name": "analyze_risks",
-        "status": "completed",
-        "message": "Generated LLM-assisted risk themes from extracted 10-K text.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="analyze_risks",
+        status="completed",
+        message="Generated LLM-assisted risk themes from extracted 10-K text.",
+    )
     assert result["llm_report_sections"]["executive_summary"] == [
         "LLM-written graph summary."
     ]
     assert "LLM-written graph bull case." in result["final_report"]
-    assert {
-        "node_name": "draft_report",
-        "status": "completed",
-        "message": "Generated LLM-assisted report sections from structured evidence.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Generated LLM-assisted report sections from structured evidence.",
+    )
 
 
 def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails() -> None:
@@ -803,11 +854,12 @@ def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails
         "message": "LLM unavailable",
         "severity": "warning",
     } in result["warnings"]
-    assert {
-        "node_name": "analyze_risks",
-        "status": "completed",
-        "message": "Generated deterministic risk themes from extracted 10-K text.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="analyze_risks",
+        status="completed",
+        message="Generated deterministic risk themes from extracted 10-K text.",
+    )
 
 
 def test_research_graph_falls_back_when_llm_returns_empty_themes() -> None:
@@ -862,11 +914,12 @@ def test_research_graph_falls_back_when_llm_report_draft_is_invalid() -> None:
         "message": "LLM report draft must include valid report sections.",
         "severity": "warning",
     } in result["warnings"]
-    assert {
-        "node_name": "draft_report",
-        "status": "completed",
-        "message": "Using deterministic report generator after LLM report drafting failed.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
+    )
 
 
 def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> None:
@@ -899,11 +952,12 @@ def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> No
         ),
         "severity": "warning",
     } in result["warnings"]
-    assert {
-        "node_name": "draft_report",
-        "status": "completed",
-        "message": "Using deterministic report generator after LLM report drafting failed.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
+    )
 
 
 def test_research_graph_rewrites_unsafe_llm_report_language() -> None:
@@ -937,17 +991,19 @@ def test_research_graph_rewrites_unsafe_llm_report_language() -> None:
         ),
         "severity": "warning",
     } in result["warnings"]
-    assert {
-        "node_name": "compliance_check",
-        "status": "completed",
-        "message": "Report required deterministic compliance rewrite and passed.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="compliance_check",
+        status="completed",
+        message="Report required deterministic compliance rewrite and passed.",
+    )
     assert result["report_quality_status"] == "passed"
-    assert {
-        "node_name": "validate_report",
-        "status": "completed",
-        "message": "Report quality validation completed without warnings.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="validate_report",
+        status="completed",
+        message="Report quality validation completed without warnings.",
+    )
     assert result["errors"] == []
 
 
@@ -976,11 +1032,12 @@ def test_research_graph_blocks_when_rewrite_cannot_make_report_safe() -> None:
         "message": "Report contained unsafe financial-advice language.",
         "severity": "error",
     } in result["errors"]
-    assert {
-        "node_name": "compliance_check",
-        "status": "failed",
-        "message": "Report contained unsafe financial-advice language.",
-    } in result["agent_steps"]
+    assert_agent_step(
+        result,
+        node_name="compliance_check",
+        status="failed",
+        message="Report contained unsafe financial-advice language.",
+    )
     assert not any(
         step["node_name"] == "validate_report" for step in result["agent_steps"]
     )

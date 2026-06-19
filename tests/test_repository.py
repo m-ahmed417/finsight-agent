@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from finsight_agent.app.db.models import Base
-from finsight_agent.app.db.repository import ResearchRunRepository
+from finsight_agent.app.db.repository import ResearchRunListCursor, ResearchRunRepository
 from finsight_agent.app.research_status import (
     RESEARCH_STATUS_COMPLETED,
     RESEARCH_STATUS_FAILED,
@@ -29,9 +29,16 @@ def set_created_at(repository, session, run_id, created_at: datetime) -> None:
     session.commit()
 
 
+def assert_datetime_round_trips(actual: datetime | None, expected: datetime) -> None:
+    assert actual is not None
+    assert actual.replace(tzinfo=timezone.utc) == expected
+
+
 def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     repository, session = make_repository(tmp_path)
     run_id = uuid4()
+    step_started_at = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+    step_completed_at = datetime(2026, 6, 16, 13, 0, 2, tzinfo=timezone.utc)
 
     created = repository.create_from_graph_result(
         run_id=run_id,
@@ -76,6 +83,9 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
                     "node_name": "resolve_company",
                     "status": "completed",
                     "message": "Resolved AAPL to Apple Inc.",
+                    "started_at": step_started_at,
+                    "completed_at": step_completed_at,
+                    "duration_seconds": 2.0,
                 },
                 {
                     "node_name": "fetch_sec_data",
@@ -93,6 +103,7 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert retrieved.id == str(run_id)
     assert retrieved.query == "AAPL"
     assert retrieved.status == "completed"
+    assert retrieved.retried_from_run_id is None
     assert retrieved.ticker == "AAPL"
     assert retrieved.company_name == "Apple Inc."
     assert retrieved.compliance_status == "allowed"
@@ -125,6 +136,12 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert [step.node_name for step in steps] == ["resolve_company", "fetch_sec_data"]
     assert [step.status for step in steps] == ["completed", "completed"]
     assert steps[0].message == "Resolved AAPL to Apple Inc."
+    assert_datetime_round_trips(steps[0].started_at, step_started_at)
+    assert_datetime_round_trips(steps[0].completed_at, step_completed_at)
+    assert steps[0].duration_seconds == 2.0
+    assert steps[1].started_at is None
+    assert steps[1].completed_at is None
+    assert steps[1].duration_seconds is None
 
     session.close()
 
@@ -141,6 +158,7 @@ def test_repository_creates_pending_research_run(tmp_path) -> None:
     assert retrieved.id == str(run_id)
     assert retrieved.query == "AAPL"
     assert retrieved.status == "queued"
+    assert retrieved.retried_from_run_id is None
     assert retrieved.ticker is None
     assert retrieved.company_name is None
     assert retrieved.compliance_status is None
@@ -158,6 +176,28 @@ def test_repository_creates_pending_research_run(tmp_path) -> None:
     assert retrieved.completed_at is None
     assert created.id == retrieved.id
     assert steps == []
+
+    session.close()
+
+
+def test_repository_creates_pending_research_run_with_retry_lineage(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+    original_run_id = uuid4()
+    retry_run_id = uuid4()
+    repository.create_pending_run(run_id=original_run_id, query="AAPL")
+    repository.mark_failed(original_run_id, error="Original run failed.")
+
+    created = repository.create_pending_run(
+        run_id=retry_run_id,
+        query="AAPL",
+        retried_from_run_id=original_run_id,
+    )
+    retrieved = repository.get_by_id(retry_run_id)
+
+    assert retrieved is not None
+    assert created.id == str(retry_run_id)
+    assert created.retried_from_run_id == str(original_run_id)
+    assert retrieved.retried_from_run_id == str(original_run_id)
 
     session.close()
 
@@ -253,6 +293,8 @@ def test_repository_marks_existing_research_run_completed_from_graph_result(
 ) -> None:
     repository, session = make_repository(tmp_path)
     run_id = uuid4()
+    step_started_at = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+    step_completed_at = datetime(2026, 6, 16, 13, 0, 3, tzinfo=timezone.utc)
     repository.create_pending_run(run_id=run_id, query="AAPL")
     repository.mark_running(run_id)
 
@@ -297,6 +339,9 @@ def test_repository_marks_existing_research_run_completed_from_graph_result(
                     "node_name": "resolve_company",
                     "status": "completed",
                     "message": "Resolved AAPL to Apple Inc.",
+                    "started_at": step_started_at,
+                    "completed_at": step_completed_at,
+                    "duration_seconds": 3.0,
                 },
                 {
                     "node_name": "fetch_sec_data",
@@ -348,6 +393,9 @@ def test_repository_marks_existing_research_run_completed_from_graph_result(
     assert [step.node_name for step in steps] == ["resolve_company", "fetch_sec_data"]
     assert [step.status for step in steps] == ["completed", "completed"]
     assert steps[0].message == "Resolved AAPL to Apple Inc."
+    assert_datetime_round_trips(steps[0].started_at, step_started_at)
+    assert_datetime_round_trips(steps[0].completed_at, step_completed_at)
+    assert steps[0].duration_seconds == 3.0
 
     session.close()
 
@@ -614,6 +662,103 @@ def test_repository_lists_recent_research_runs_filtered_by_status(tmp_path) -> N
         RESEARCH_STATUS_FAILED,
         RESEARCH_STATUS_FAILED,
     ]
+
+    session.close()
+
+
+def test_repository_lists_recent_research_runs_after_cursor(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+    shared_created_at = datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc)
+    newest_id = UUID("00000000-0000-0000-0000-000000000003")
+    middle_id = UUID("00000000-0000-0000-0000-000000000002")
+    oldest_id = UUID("00000000-0000-0000-0000-000000000001")
+    for run_id, query in [
+        (oldest_id, "AAPL"),
+        (middle_id, "MSFT"),
+        (newest_id, "NVDA"),
+    ]:
+        repository.create_pending_run(run_id=run_id, query=query)
+        set_created_at(repository, session, run_id, shared_created_at)
+
+    recent_runs = repository.list_recent_runs(
+        limit=2,
+        before=ResearchRunListCursor(
+            created_at=shared_created_at,
+            run_id=str(newest_id),
+        ),
+    )
+
+    assert [run.id for run in recent_runs] == [str(middle_id), str(oldest_id)]
+
+    session.close()
+
+
+def test_repository_lists_retry_chain_from_any_run_in_creation_order(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+    original_id = uuid4()
+    first_retry_id = uuid4()
+    second_retry_id = uuid4()
+    unrelated_id = uuid4()
+
+    repository.create_pending_run(run_id=original_id, query="AAPL")
+    repository.mark_failed(original_id, error="Original run failed.")
+    set_created_at(
+        repository,
+        session,
+        original_id,
+        datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc),
+    )
+    repository.create_pending_run(
+        run_id=first_retry_id,
+        query="AAPL",
+        retried_from_run_id=original_id,
+    )
+    repository.mark_failed(first_retry_id, error="First retry failed.")
+    set_created_at(
+        repository,
+        session,
+        first_retry_id,
+        datetime(2026, 6, 16, 10, 0, tzinfo=timezone.utc),
+    )
+    repository.create_pending_run(
+        run_id=second_retry_id,
+        query="AAPL",
+        retried_from_run_id=first_retry_id,
+    )
+    set_created_at(
+        repository,
+        session,
+        second_retry_id,
+        datetime(2026, 6, 16, 11, 0, tzinfo=timezone.utc),
+    )
+    repository.create_pending_run(run_id=unrelated_id, query="MSFT")
+    set_created_at(
+        repository,
+        session,
+        unrelated_id,
+        datetime(2026, 6, 16, 12, 0, tzinfo=timezone.utc),
+    )
+
+    retry_chain = repository.list_retry_chain(first_retry_id)
+
+    assert [run.id for run in retry_chain] == [
+        str(original_id),
+        str(first_retry_id),
+        str(second_retry_id),
+    ]
+    assert [run.retried_from_run_id for run in retry_chain] == [
+        None,
+        str(original_id),
+        str(first_retry_id),
+    ]
+
+    session.close()
+
+
+def test_repository_returns_empty_retry_chain_for_unknown_run_id(tmp_path) -> None:
+    repository, session = make_repository(tmp_path)
+
+    assert repository.list_retry_chain(uuid4()) == []
 
     session.close()
 

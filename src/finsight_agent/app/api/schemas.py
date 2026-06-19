@@ -94,6 +94,19 @@ class AgentStep(BaseModel):
     status: str
     message: str | None = None
     error_message: str | None = None
+    started_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when this workflow step started, if captured.",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when this workflow step completed, if captured.",
+    )
+    duration_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Elapsed seconds for this workflow step, if captured.",
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -143,8 +156,86 @@ class ResearchError(BaseModel):
         return text
 
 
+class ResearchRunSummary(BaseModel):
+    run_id: UUID
+    retried_from_run_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Original failed research run ID when this run was created by a retry, "
+            "or null for first-attempt runs."
+        ),
+    )
+    query: str = Field(description="Original research query submitted for the run.")
+    status: ResearchStatus = Field(
+        description=(
+            "Lifecycle status for scanning research runs: queued, running, "
+            "completed, or failed."
+        )
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the research run was created.",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description=(
+            "UTC timestamp when the research run reached a terminal status, "
+            "or null while it is queued or running."
+        ),
+    )
+    duration_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Elapsed seconds between created_at and completed_at, or null while "
+            "the run is queued or running."
+        ),
+    )
+    ticker: str | None = Field(default=None, description="Resolved ticker, if available.")
+    company_name: str | None = Field(
+        default=None,
+        description="Resolved company name, if available.",
+    )
+    warnings_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of warning diagnostics persisted on the run.",
+    )
+    errors_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of error diagnostics persisted on the run.",
+    )
+    has_report: bool = Field(
+        default=False,
+        description="Whether the detailed run resource includes a final report.",
+    )
+
+
+class ResearchRunListResponse(BaseModel):
+    items: list[ResearchRunSummary] = Field(
+        default_factory=list,
+        description="Compact research run summaries for this page.",
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description="Opaque cursor to request the next page, or null at the end.",
+    )
+    has_more: bool = Field(
+        default=False,
+        description="Whether another page is available after this response.",
+    )
+
+
 class ResearchResponse(BaseModel):
     run_id: UUID
+    retried_from_run_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Original failed research run ID when this run was created by a retry, "
+            "or null for first-attempt runs."
+        ),
+    )
     query: str | None = None
     status: ResearchStatus = Field(
         description=(
@@ -189,3 +280,45 @@ class ResearchResponse(BaseModel):
 class AgentStepResponse(AgentStep):
     id: int
     research_run_id: str
+
+
+class ResearchProgressResponse(BaseModel):
+    run_id: UUID = Field(description="Research run ID for this progress summary.")
+    status: ResearchStatus = Field(
+        description="Current lifecycle status for the research run.",
+    )
+    total_steps: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of stored workflow steps for the run.",
+    )
+    completed_steps: int = Field(
+        default=0,
+        ge=0,
+        description="Number of stored workflow steps with status completed.",
+    )
+    failed_steps: int = Field(
+        default=0,
+        ge=0,
+        description="Number of stored workflow steps with status failed.",
+    )
+    latest_step: AgentStepResponse | None = Field(
+        default=None,
+        description="Most recently stored workflow step, or null when no step exists.",
+    )
+    workflow_started_at: datetime | None = Field(
+        default=None,
+        description="Earliest captured step start timestamp for the run.",
+    )
+    workflow_completed_at: datetime | None = Field(
+        default=None,
+        description="Latest captured step completion timestamp for the run.",
+    )
+    workflow_duration_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Elapsed seconds between workflow_started_at and "
+            "workflow_completed_at when both are available."
+        ),
+    )

@@ -6,7 +6,10 @@ from pydantic import ValidationError
 from finsight_agent.app.api.schemas import (
     AgentStep,
     ResearchError,
+    ResearchProgressResponse,
     ResearchResponse,
+    ResearchRunListResponse,
+    ResearchRunSummary,
     ResearchWarning,
     SourceMetadata,
 )
@@ -95,18 +98,35 @@ def test_agent_step_validates_required_fields_and_preserves_extra_metadata() -> 
             "node_name": " fetch_sec_data ",
             "status": " completed ",
             "message": "Fetched SEC submissions and company facts.",
+            "started_at": "2026-06-16T13:00:00+00:00",
+            "completed_at": "2026-06-16T13:00:02+00:00",
+            "duration_seconds": 2.0,
             "duration_ms": 125,
         }
     )
 
     assert step.node_name == "fetch_sec_data"
     assert step.status == "completed"
+    assert step.started_at == datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+    assert step.completed_at == datetime(2026, 6, 16, 13, 0, 2, tzinfo=timezone.utc)
+    assert step.duration_seconds == 2.0
     assert step.model_dump()["duration_ms"] == 125
 
 
 def test_agent_step_rejects_blank_required_fields() -> None:
     with pytest.raises(ValidationError, match="Agent step field cannot be empty"):
         AgentStep.model_validate({"node_name": "resolve_company", "status": " "})
+
+
+def test_agent_step_rejects_negative_duration() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        AgentStep.model_validate(
+            {
+                "node_name": "resolve_company",
+                "status": "completed",
+                "duration_seconds": -0.01,
+            }
+        )
 
 
 def test_research_warning_validates_core_fields_and_preserves_details() -> None:
@@ -174,6 +194,131 @@ def test_research_response_exposes_lifecycle_timestamps() -> None:
     assert response.created_at == created_at
     assert response.completed_at == completed_at
     assert response.duration_seconds == 150.0
+
+
+def test_research_response_exposes_retry_lineage() -> None:
+    response = ResearchResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "retried_from_run_id": "00000000-0000-0000-0000-000000000001",
+            "status": "queued",
+        }
+    )
+
+    assert str(response.retried_from_run_id) == (
+        "00000000-0000-0000-0000-000000000001"
+    )
+
+
+def test_research_run_summary_exposes_compact_list_metadata() -> None:
+    created_at = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 6, 16, 13, 2, 30, tzinfo=timezone.utc)
+
+    summary = ResearchRunSummary.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000002",
+            "retried_from_run_id": "00000000-0000-0000-0000-000000000001",
+            "query": "AAPL",
+            "status": "completed",
+            "created_at": created_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_seconds": 150.0,
+            "ticker": "AAPL",
+            "company_name": "Apple Inc.",
+            "warnings_count": 2,
+            "errors_count": 1,
+            "has_report": True,
+        }
+    )
+
+    assert summary.status == "completed"
+    assert summary.created_at == created_at
+    assert summary.completed_at == completed_at
+    assert summary.duration_seconds == 150.0
+    assert summary.warnings_count == 2
+    assert summary.errors_count == 1
+    assert summary.has_report is True
+
+
+def test_research_run_summary_rejects_negative_counts() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        ResearchRunSummary.model_validate(
+            {
+                "run_id": "00000000-0000-0000-0000-000000000001",
+                "query": "AAPL",
+                "status": "failed",
+                "warnings_count": -1,
+                "errors_count": 0,
+                "has_report": False,
+            }
+        )
+
+
+def test_research_run_list_response_wraps_items_with_cursor_metadata() -> None:
+    response = ResearchRunListResponse.model_validate(
+        {
+            "items": [
+                {
+                    "run_id": "00000000-0000-0000-0000-000000000001",
+                    "query": "AAPL",
+                    "status": "queued",
+                    "warnings_count": 0,
+                    "errors_count": 0,
+                    "has_report": False,
+                }
+            ],
+            "next_cursor": "opaque-cursor",
+            "has_more": True,
+        }
+    )
+
+    assert len(response.items) == 1
+    assert response.next_cursor == "opaque-cursor"
+    assert response.has_more is True
+
+
+def test_research_progress_response_summarizes_stored_steps() -> None:
+    response = ResearchProgressResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "status": "completed",
+            "total_steps": 2,
+            "completed_steps": 2,
+            "failed_steps": 0,
+            "workflow_started_at": "2026-06-16T13:00:00+00:00",
+            "workflow_completed_at": "2026-06-16T13:00:03+00:00",
+            "workflow_duration_seconds": 3.0,
+            "latest_step": {
+                "id": 2,
+                "research_run_id": "00000000-0000-0000-0000-000000000001",
+                "node_name": "fetch_sec_data",
+                "status": "completed",
+                "message": "Fetched SEC submissions and company facts.",
+                "completed_at": "2026-06-16T13:00:03+00:00",
+                "duration_seconds": 2.0,
+            },
+        }
+    )
+
+    assert response.total_steps == 2
+    assert response.completed_steps == 2
+    assert response.failed_steps == 0
+    assert response.workflow_duration_seconds == 3.0
+    assert response.latest_step is not None
+    assert response.latest_step.node_name == "fetch_sec_data"
+
+
+def test_research_progress_response_rejects_negative_counts() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        ResearchProgressResponse.model_validate(
+            {
+                "run_id": "00000000-0000-0000-0000-000000000001",
+                "status": "failed",
+                "total_steps": -1,
+                "completed_steps": 0,
+                "failed_steps": 0,
+            }
+        )
 
 
 def test_research_response_rejects_unknown_lifecycle_status() -> None:

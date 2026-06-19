@@ -29,7 +29,13 @@ class ResearchGraphRunner(Protocol):
 
 
 class ResearchRunRepository(Protocol):
-    def create_pending_run(self, *, run_id: UUID, query: str) -> object:
+    def create_pending_run(
+        self,
+        *,
+        run_id: UUID,
+        query: str,
+        retried_from_run_id: UUID | None = None,
+    ) -> object:
         """Persist a queued research run."""
 
     def get_by_id(self, run_id: UUID) -> object | None:
@@ -63,9 +69,14 @@ def enqueue_research_run(
     query: str,
     repository: ResearchRunRepository,
     run_id: UUID | None = None,
+    retried_from_run_id: UUID | None = None,
 ) -> object:
     research_run_id = run_id or uuid4()
-    return repository.create_pending_run(run_id=research_run_id, query=query)
+    return repository.create_pending_run(
+        run_id=research_run_id,
+        query=query,
+        retried_from_run_id=retried_from_run_id,
+    )
 
 
 def retry_failed_research_run(
@@ -86,6 +97,7 @@ def retry_failed_research_run(
         query=original_run.query,
         repository=repository,
         run_id=new_run_id,
+        retried_from_run_id=run_id,
     )
 
 

@@ -1,3 +1,7 @@
+import base64
+import binascii
+from collections.abc import Iterable
+import json
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -13,11 +17,14 @@ from finsight_agent.app.api.schemas import (
     AgentStepResponse,
     CompanySearchResult,
     HealthResponse,
+    ResearchProgressResponse,
     ResearchRequest,
     ResearchResponse,
+    ResearchRunListResponse,
+    ResearchRunSummary,
 )
 from finsight_agent.app.db.models import AgentStep, ResearchRun
-from finsight_agent.app.db.repository import ResearchRunRepository
+from finsight_agent.app.db.repository import ResearchRunListCursor, ResearchRunRepository
 from finsight_agent.app.research_status import ResearchStatus
 from finsight_agent.app.services.company_resolver import CompanyResolver
 from finsight_agent.app.services.research_job import (
@@ -83,7 +90,15 @@ def research(
     return _research_run_to_response(run)
 
 
-@router.get("/research", response_model=list[ResearchResponse])
+@router.get(
+    "/research",
+    response_model=ResearchRunListResponse,
+    summary="List compact research run summaries",
+    description=(
+        "Returns paginated compact summaries for recent research runs. Use the "
+        "next_cursor value as the cursor query parameter to request the next page."
+    ),
+)
 def list_research_runs(
     status: ResearchStatus | None = Query(
         default=None,
@@ -95,10 +110,32 @@ def list_research_runs(
         le=100,
         description="Maximum number of recent research runs to return.",
     ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor returned by the previous research list response.",
+    ),
     repository: ResearchRunRepository = Depends(get_research_repository),
-) -> list[ResearchResponse]:
-    runs = repository.list_recent_runs(status=status, limit=limit)
-    return [_research_run_to_response(run) for run in runs]
+) -> ResearchRunListResponse:
+    try:
+        before = _decode_research_list_cursor(cursor) if cursor is not None else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid research list cursor.",
+        ) from exc
+
+    runs = repository.list_recent_runs(status=status, limit=limit + 1, before=before)
+    page_runs = runs[:limit]
+    has_more = len(runs) > limit
+    return ResearchRunListResponse(
+        items=[_research_run_to_summary(run) for run in page_runs],
+        next_cursor=(
+            _encode_research_list_cursor(page_runs[-1])
+            if has_more and page_runs
+            else None
+        ),
+        has_more=has_more,
+    )
 
 
 @router.post(
@@ -136,6 +173,21 @@ def retry_research(
     return _research_run_to_response(retry_run)
 
 
+@router.get("/research/{run_id}/retries", response_model=list[ResearchResponse])
+def get_research_retry_chain(
+    run_id: UUID,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> list[ResearchResponse]:
+    retry_chain = repository.list_retry_chain(run_id)
+    if not retry_chain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        )
+
+    return [_research_run_to_response(run) for run in retry_chain]
+
+
 @router.get("/research/{run_id}", response_model=ResearchResponse)
 def get_research(
     run_id: UUID,
@@ -149,6 +201,24 @@ def get_research(
         )
 
     return _research_run_to_response(run)
+
+
+@router.get("/research/{run_id}/progress", response_model=ResearchProgressResponse)
+def get_research_progress(
+    run_id: UUID,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> ResearchProgressResponse:
+    run = repository.get_by_id(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        )
+
+    return _research_progress_to_response(
+        run,
+        repository.get_steps_for_run(run_id),
+    )
 
 
 @router.get("/research/{run_id}/steps", response_model=list[AgentStepResponse])
@@ -169,6 +239,11 @@ def get_research_steps(
 def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
     return ResearchResponse(
         run_id=UUID(run.id),
+        retried_from_run_id=(
+            UUID(run.retried_from_run_id)
+            if run.retried_from_run_id is not None
+            else None
+        ),
         query=run.query,
         status=run.status,
         created_at=run.created_at,
@@ -190,6 +265,81 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
     )
 
 
+def _research_run_to_summary(run: ResearchRun) -> ResearchRunSummary:
+    return ResearchRunSummary(
+        run_id=UUID(run.id),
+        retried_from_run_id=(
+            UUID(run.retried_from_run_id)
+            if run.retried_from_run_id is not None
+            else None
+        ),
+        query=run.query,
+        status=run.status,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        duration_seconds=_duration_seconds(run.created_at, run.completed_at),
+        ticker=run.ticker,
+        company_name=run.company_name,
+        warnings_count=len(run.warnings_json or []),
+        errors_count=len(run.errors_json or []),
+        has_report=bool((run.final_report or "").strip()),
+    )
+
+
+def _research_progress_to_response(
+    run: ResearchRun,
+    steps: list[AgentStep],
+) -> ResearchProgressResponse:
+    step_responses = [_agent_step_to_response(step) for step in steps]
+    workflow_started_at = _earliest_datetime(
+        step.started_at for step in step_responses
+    )
+    workflow_completed_at = _latest_datetime(
+        step.completed_at for step in step_responses
+    )
+    return ResearchProgressResponse(
+        run_id=UUID(run.id),
+        status=run.status,
+        total_steps=len(step_responses),
+        completed_steps=_count_steps_by_status(step_responses, "completed"),
+        failed_steps=_count_steps_by_status(step_responses, "failed"),
+        latest_step=step_responses[-1] if step_responses else None,
+        workflow_started_at=workflow_started_at,
+        workflow_completed_at=workflow_completed_at,
+        workflow_duration_seconds=_duration_seconds(
+            workflow_started_at,
+            workflow_completed_at,
+        ),
+    )
+
+
+def _encode_research_list_cursor(run: ResearchRun) -> str:
+    payload = {
+        "created_at": _as_utc(run.created_at).isoformat(),
+        "run_id": str(UUID(run.id)),
+    }
+    raw_payload = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw_payload).decode().rstrip("=")
+
+
+def _decode_research_list_cursor(cursor: str) -> ResearchRunListCursor:
+    try:
+        padded_cursor = cursor + ("=" * (-len(cursor) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded_cursor.encode()).decode())
+        created_at = datetime.fromisoformat(payload["created_at"])
+        run_id = str(UUID(payload["run_id"]))
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as exc:
+        raise ValueError("Invalid research list cursor.") from exc
+
+    return ResearchRunListCursor(created_at=_as_utc(created_at), run_id=run_id)
+
+
 def _duration_seconds(
     created_at: datetime | None,
     completed_at: datetime | None,
@@ -200,6 +350,24 @@ def _duration_seconds(
     created_at_utc = _as_utc(created_at)
     completed_at_utc = _as_utc(completed_at)
     return max((completed_at_utc - created_at_utc).total_seconds(), 0.0)
+
+
+def _count_steps_by_status(steps: list[AgentStepResponse], status_value: str) -> int:
+    return sum(1 for step in steps if step.status == status_value)
+
+
+def _earliest_datetime(values: Iterable[datetime | None]) -> datetime | None:
+    datetimes = [value for value in values if value is not None]
+    if not datetimes:
+        return None
+    return min(_as_utc(value) for value in datetimes)
+
+
+def _latest_datetime(values: Iterable[datetime | None]) -> datetime | None:
+    datetimes = [value for value in values if value is not None]
+    if not datetimes:
+        return None
+    return max(_as_utc(value) for value in datetimes)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -216,4 +384,13 @@ def _agent_step_to_response(step: AgentStep) -> AgentStepResponse:
         status=step.status,
         message=step.message,
         error_message=step.error_message,
+        started_at=_nullable_as_utc(step.started_at),
+        completed_at=_nullable_as_utc(step.completed_at),
+        duration_seconds=step.duration_seconds,
     )
+
+
+def _nullable_as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _as_utc(value)
