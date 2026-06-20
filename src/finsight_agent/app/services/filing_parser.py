@@ -49,6 +49,12 @@ class RiskFactorsSection(BaseModel):
     text: str
 
 
+class BusinessSection(BaseModel):
+    item: str
+    section_label: str
+    text: str
+
+
 def get_recent_filings(submissions: dict[str, Any]) -> list[FilingRecord]:
     recent = _get_recent_filings_data(submissions)
     if not recent:
@@ -112,10 +118,39 @@ def normalize_accession_number(accession_number: str) -> str:
     return accession_number.strip().replace("-", "")
 
 
+def extract_business_section(filing_text: str) -> BusinessSection | None:
+    section_text = _extract_item_section(
+        filing_text,
+        start_pattern=r"\bitem\s+1\.?\s+business\b",
+        end_pattern=r"\bitem\s+1a\.?\s+risk\s+factors\b",
+    )
+    if section_text is None:
+        return None
+
+    return BusinessSection(item="1", section_label="Business", text=section_text)
+
+
 def extract_risk_factors_section(filing_text: str) -> RiskFactorsSection | None:
+    section_text = _extract_item_section(
+        filing_text,
+        start_pattern=r"\bitem\s+1a\.?\s+risk\s+factors\b",
+        end_pattern=r"\bitem\s+(?:1b|2)\.?\b",
+    )
+    if section_text is None:
+        return None
+
+    return RiskFactorsSection(item="1A", text=section_text)
+
+
+def _extract_item_section(
+    filing_text: str,
+    *,
+    start_pattern: str,
+    end_pattern: str,
+) -> str | None:
     plain_text = _to_plain_text(filing_text)
     start_match = re.search(
-        r"\bitem\s+1a\.?\s+risk\s+factors\b",
+        start_pattern,
         plain_text,
         flags=re.IGNORECASE,
     )
@@ -123,7 +158,7 @@ def extract_risk_factors_section(filing_text: str) -> RiskFactorsSection | None:
         return None
 
     end_match = re.search(
-        r"\bitem\s+(?:1b|2)\.?\b",
+        end_pattern,
         plain_text[start_match.end() :],
         flags=re.IGNORECASE,
     )
@@ -135,8 +170,7 @@ def extract_risk_factors_section(filing_text: str) -> RiskFactorsSection | None:
     section_text = _clean_section_text(plain_text[start_match.end() : section_end])
     if not section_text:
         return None
-
-    return RiskFactorsSection(item="1A", text=section_text)
+    return section_text
 
 
 def _get_recent_filings_data(submissions: dict[str, Any]) -> dict[str, Any]:

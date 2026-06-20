@@ -4,6 +4,7 @@ from pathlib import Path
 
 from finsight_agent.app.services.filing_parser import (
     FilingRecord,
+    extract_business_section,
     extract_risk_factors_section,
     find_latest_filing,
     get_recent_filings,
@@ -110,6 +111,43 @@ def test_get_recent_filings_skips_malformed_rows() -> None:
 
 def test_normalize_accession_number_removes_dashes_for_sec_document_paths() -> None:
     assert normalize_accession_number("0000320193-24-000123") == "000032019324000123"
+
+
+def test_extract_business_section_returns_item_1_text() -> None:
+    section = extract_business_section(load_text_fixture("sample_10k_excerpt.txt"))
+
+    assert section is not None
+    assert section.item == "1"
+    assert section.section_label == "Business"
+    assert "Apple Inc. designs, manufactures, and markets smartphones" in section.text
+    assert "Item 1A. Risk Factors" not in section.text
+    assert "The Company faces intense competition" not in section.text
+    assert "Item 1B. Unresolved Staff Comments" not in section.text
+
+
+def test_extract_business_section_handles_html_and_spacing_variants() -> None:
+    filing_text = """
+    <html><body>
+    <h2>ITEM&nbsp;1&nbsp;&nbsp; BUSINESS</h2>
+    <p>The Company provides cloud software and support services.</p>
+    <h2>Item&nbsp;1A. Risk Factors</h2>
+    <p>Risk text should not be included.</p>
+    </body></html>
+    """
+
+    section = extract_business_section(filing_text)
+
+    assert section is not None
+    assert section.item == "1"
+    assert section.text == "The Company provides cloud software and support services."
+
+
+def test_extract_business_section_returns_none_when_missing() -> None:
+    section = extract_business_section(
+        "Item 1A. Risk Factors\n\nOnly risk text is available."
+    )
+
+    assert section is None
 
 
 def test_extract_risk_factors_section_returns_item_1a_text() -> None:

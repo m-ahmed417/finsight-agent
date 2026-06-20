@@ -23,6 +23,7 @@ def generate_research_report(
     risk_factors: list[dict[str, Any]] | None = None,
     risk_themes: list[dict[str, Any]] | None = None,
     research_insights: dict[str, Any] | None = None,
+    business_overview: dict[str, Any] | None = None,
     llm_report_sections: dict[str, Any] | None = None,
 ) -> str:
     metrics = financial_metrics or {"periods": []}
@@ -48,6 +49,7 @@ def generate_research_report(
                 latest_10k,
                 latest_10q,
                 sources,
+                business_overview,
             ),
             "## 4. Financial Performance\n\n"
             + _financial_performance_summary(metrics, drafted_sections),
@@ -74,7 +76,8 @@ def generate_research_report(
                 drafted_sections,
             ),
             "## 10. Sources Used\n\n" + _sources_section(latest_10k, latest_10q, sources),
-            "## 11. Limitations\n\n" + _limitations_section(warnings),
+            "## 11. Limitations\n\n"
+            + _limitations_section(warnings, business_overview),
         ]
     )
 
@@ -171,11 +174,17 @@ def _company_overview_section(
     latest_10k: dict[str, Any] | None,
     latest_10q: dict[str, Any] | None,
     sources: list[dict[str, Any]],
+    business_overview: dict[str, Any] | None,
 ) -> str:
     source_ids = _source_ids_from_sources(sources)
     overview_lines = [
         f"{company_name} ({ticker}) is the resolved company for this research brief."
     ]
+
+    business_overview_text = _business_overview_text(business_overview)
+    if business_overview_text:
+        overview_lines.append(business_overview_text)
+        return "\n\n".join(overview_lines)
 
     source_labels = _overview_source_labels(source_ids, latest_10k, latest_10q)
     if source_labels:
@@ -191,6 +200,21 @@ def _company_overview_section(
         )
 
     return "\n\n".join(overview_lines)
+
+
+def _business_overview_text(business_overview: dict[str, Any] | None) -> str:
+    if not business_overview:
+        return ""
+
+    summary = str(business_overview.get("summary") or "").strip()
+    if not summary:
+        return ""
+
+    citations = _format_citations(business_overview.get("source_ids"))
+    source = str(business_overview.get("source") or "").strip()
+    if source:
+        return f"{summary} Source: {source}.{_citation_suffix(citations)}"
+    return f"{summary}{_citation_suffix(citations)}"
 
 
 def _overview_source_labels(
@@ -325,15 +349,47 @@ def _format_risk_theme(theme: dict[str, Any]) -> str:
     return f"{summary_text}{_citation_suffix(_format_citations(theme.get('source_ids')))}"
 
 
-def _limitations_section(warnings: list[dict[str, Any]]) -> str:
-    if not warnings:
+def _limitations_section(
+    warnings: list[dict[str, Any]],
+    business_overview: dict[str, Any] | None,
+) -> str:
+    limitations = _limitation_messages(warnings, business_overview)
+    if not limitations:
         return (
             "- This report is limited to the SEC-derived evidence available in this run.\n"
             "- It does not include market prices, valuation targets, or personalized "
             "investment context."
         )
 
-    return "\n".join(f"- {warning.get('message', warning)}" for warning in warnings)
+    return "\n".join(f"- {limitation}" for limitation in limitations)
+
+
+def _limitation_messages(
+    warnings: list[dict[str, Any]],
+    business_overview: dict[str, Any] | None,
+) -> list[str]:
+    limitations: list[str] = []
+    seen: set[str] = set()
+
+    for warning in warnings:
+        message = warning.get("message", warning)
+        _append_unique_text(limitations, seen, message)
+
+    if business_overview:
+        overview_limitations = business_overview.get("limitations", [])
+        if isinstance(overview_limitations, list):
+            for limitation in overview_limitations:
+                _append_unique_text(limitations, seen, limitation)
+
+    return limitations
+
+
+def _append_unique_text(items: list[str], seen: set[str], value: Any) -> None:
+    text = str(value).strip()
+    if not text or text in seen:
+        return
+    items.append(text)
+    seen.add(text)
 
 
 def _format_value(value: Any) -> str:

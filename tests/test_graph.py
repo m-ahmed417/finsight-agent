@@ -61,6 +61,21 @@ class FilingDocumentFailingSECClient(FakeSECClient):
         raise RuntimeError("Filing document unavailable")
 
 
+class BusinessSectionMissingSECClient(FakeSECClient):
+    def fetch_filing_document(
+        self,
+        cik: str,
+        accession_number: str,
+        primary_document: str,
+    ) -> str:
+        return (
+            "Item 1A. Risk Factors\n\n"
+            "The Company faces intense competition in all markets in which it operates.\n\n"
+            "Item 1B. Unresolved Staff Comments\n\n"
+            "None."
+        )
+
+
 class CacheMetadataSECClient(FakeSECClient):
     def fetch_company_submissions_with_metadata(self, cik: str) -> SimpleNamespace:
         return SimpleNamespace(
@@ -437,6 +452,61 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     }
     assert risk_factor["text_character_count"] == len(expected_risk_text)
     assert datetime.fromisoformat(risk_factor["extracted_at"])
+    expected_business_text = (
+        "Apple Inc. designs, manufactures, and markets smartphones, personal computers,\n"
+        "tablets, wearables, and accessories."
+    )
+    assert len(result["business_sections"]) == 1
+    business_section = result["business_sections"][0]
+    assert {
+        "source_id": business_section["source_id"],
+        "source_type": business_section["source_type"],
+        "form": business_section["form"],
+        "filing_date": business_section["filing_date"],
+        "accession_number": business_section["accession_number"],
+        "source_url": business_section["source_url"],
+        "source_ids": business_section["source_ids"],
+        "section": business_section["section"],
+        "section_label": business_section["section_label"],
+        "text": business_section["text"],
+    } == {
+        "source_id": "latest_10k",
+        "source_type": "sec_business_section",
+        "form": "10-K",
+        "filing_date": "2024-11-01",
+        "accession_number": "0000320193-24-000123",
+        "source_url": (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000032019324000123/aapl-20240928.htm"
+        ),
+        "source_ids": ["latest_10k"],
+        "section": "Item 1",
+        "section_label": "Business",
+        "text": expected_business_text,
+    }
+    assert business_section["text_character_count"] == len(expected_business_text)
+    assert datetime.fromisoformat(business_section["extracted_at"])
+    assert result["business_overview"] == {
+        "status": "available",
+        "summary": (
+            "Apple Inc. (AAPL) has Item 1 Business evidence from the latest "
+            "10-K filed 2024-11-01. Use this SEC filing evidence for company "
+            "overview context without adding external company descriptions."
+        ),
+        "source": "10-K filed 2024-11-01, accession 0000320193-24-000123",
+        "source_ids": ["latest_10k"],
+        "source_form": "10-K",
+        "filing_date": "2024-11-01",
+        "accession_number": "0000320193-24-000123",
+        "source_url": (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000032019324000123/aapl-20240928.htm"
+        ),
+        "section": "Item 1",
+        "section_label": "Business",
+        "text_character_count": len(expected_business_text),
+        "limitations": [],
+    }
     assert result["risk_themes"] == [
         {
             "title": "Competitive pressure",
@@ -594,10 +664,13 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         ),
         "data_format": "html",
         "metadata_source_ids": ["sec_submissions"],
-        "extraction_status": "risk_factors_extracted",
-        "extracted_sections": ["Item 1A Risk Factors"],
+        "extraction_status": "business_and_risk_factors_extracted",
+        "extracted_sections": ["Item 1 Business", "Item 1A Risk Factors"],
     }
     assert filing_10k_source["document_character_count"] == len(result["filing_text"])
+    assert filing_10k_source["business_text_character_count"] == len(
+        expected_business_text
+    )
     assert filing_10k_source["risk_factor_text_character_count"] == len(
         expected_risk_text
     )
@@ -632,9 +705,10 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "latest 10-Q 0000320193-24-000099 filed 2024-08-02."
     )
     assert step_by_name["fetch_filing_text"]["message"] == (
-        "Retrieved latest 10-K risk-factor text; "
+        "Retrieved latest 10-K business and risk-factor text; "
         f"document characters: {len(result['filing_text'])}, "
-        f"extracted characters: {len(expected_risk_text)}."
+        f"business characters: {len(expected_business_text)}, "
+        f"risk-factor characters: {len(expected_risk_text)}."
     )
     assert step_by_name["extract_metrics"]["message"] == (
         "Extracted financial metrics from SEC company facts; "
@@ -845,6 +919,16 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
 
     assert result["ticker"] == "AAPL"
     assert result["filing_text"] is None
+    assert result["business_sections"] == []
+    assert result["business_overview"] == {
+        "status": "limited",
+        "summary": (
+            "Apple Inc. (AAPL) business overview is limited to resolved company "
+            "identity because Item 1 Business evidence was not available in this run."
+        ),
+        "source_ids": [],
+        "limitations": ["Filing document unavailable"],
+    }
     assert result["risk_factors"] == []
     assert result["risk_themes"] == []
     assert result["financial_metrics"]["periods"][1]["revenue"] == 1250000000
@@ -867,6 +951,64 @@ def test_research_graph_continues_when_filing_text_is_unavailable() -> None:
         node_name="analyze_risks",
         status="completed",
         message="Risk-factor text was unavailable for analysis.",
+    )
+    assert result["errors"] == []
+
+
+def test_research_graph_warns_when_business_section_is_missing() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = BusinessSectionMissingSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(resolver=resolver, sec_client=sec_client)
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["business_sections"] == []
+    assert result["business_overview"] == {
+        "status": "limited",
+        "summary": (
+            "Apple Inc. (AAPL) business overview is limited to resolved company "
+            "identity because Item 1 Business evidence was not available in this run."
+        ),
+        "source_ids": [],
+        "limitations": ["Item 1 business section could not be extracted."],
+    }
+    assert len(result["risk_factors"]) == 1
+    assert result["final_report"] is not None
+    assert {
+        "code": "business_section_unavailable",
+        "message": "Item 1 business section could not be extracted.",
+        "severity": "warning",
+        "details": {
+            "source_id": "latest_10k",
+            "accession_number": "0000320193-24-000123",
+            "primary_document": "aapl-20240928.htm",
+            "document_character_count": len(result["filing_text"]),
+        },
+    } in result["warnings"]
+    filing_10k_source = next(
+        source
+        for source in result["sources"]
+        if source["source_type"] == "sec_filing" and source["form"] == "10-K"
+    )
+    assert filing_10k_source["extraction_status"] == "risk_factors_extracted"
+    assert filing_10k_source["extracted_sections"] == ["Item 1A Risk Factors"]
+    assert "business_text_character_count" not in filing_10k_source
+    assert_agent_step(
+        result,
+        node_name="fetch_filing_text",
+        status="completed",
+        message=(
+            "Retrieved latest 10-K risk-factor text; business section unavailable; "
+            f"document characters: {len(result['filing_text'])}, "
+            f"risk-factor characters: {len(result['risk_factors'][0]['text'])}."
+        ),
     )
     assert result["errors"] == []
 

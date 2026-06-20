@@ -41,6 +41,30 @@ COMPLETE_SOURCES = [
     },
 ]
 
+RAW_BUSINESS_TEXT = (
+    "Apple Inc. designs, manufactures, and markets smartphones, personal "
+    "computers, tablets, wearables, and accessories."
+)
+
+BUSINESS_OVERVIEW = {
+    "status": "available",
+    "summary": (
+        "Apple Inc. (AAPL) has Item 1 Business evidence from the latest "
+        "10-K filed 2024-11-01. Use this SEC filing evidence for company "
+        "overview context without adding external company descriptions."
+    ),
+    "source": "10-K filed 2024-11-01, accession abc",
+    "source_ids": ["latest_10k"],
+    "source_form": "10-K",
+    "filing_date": "2024-11-01",
+    "accession_number": "abc",
+    "source_url": "https://www.sec.gov/Archives/example-10k.htm",
+    "section": "Item 1",
+    "section_label": "Business",
+    "text_character_count": len(RAW_BUSINESS_TEXT),
+    "limitations": [],
+}
+
 
 def test_generate_research_report_contains_required_sections() -> None:
     report = generate_research_report(
@@ -390,6 +414,69 @@ def test_generate_research_report_includes_grounded_company_overview() -> None:
     assert "business overview has not been generated" not in overview.casefold()
 
 
+def test_generate_research_report_uses_business_overview_evidence() -> None:
+    sources = [
+        *COMPLETE_SOURCES[:-1],
+        {
+            **COMPLETE_SOURCES[-1],
+            "extracted_sections": ["Item 1 Business", "Item 1A Risk Factors"],
+            "extraction_status": "business_and_risk_factors_extracted",
+        },
+    ]
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k={
+            "form": "10-K",
+            "filing_date": "2024-11-01",
+            "accession_number": "abc",
+        },
+        latest_10q=None,
+        warnings=[],
+        sources=sources,
+        business_overview={**BUSINESS_OVERVIEW, "text": RAW_BUSINESS_TEXT},
+    )
+
+    overview = _extract_section(report, "## 3. Company Overview")
+    sources_section = _extract_section(report, "## 10. Sources Used")
+
+    assert BUSINESS_OVERVIEW["summary"] in overview
+    assert "Source: 10-K filed 2024-11-01, accession abc" in overview
+    assert "[latest_10k]" in overview
+    assert RAW_BUSINESS_TEXT not in report
+    assert "smartphones" not in report.casefold()
+    assert "extracted sections: Item 1 Business, Item 1A Risk Factors" in sources_section
+
+
+def test_generate_research_report_surfaces_limited_business_overview() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={"periods": []},
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+        business_overview={
+            "status": "limited",
+            "summary": (
+                "Apple Inc. (AAPL) business overview is limited to resolved company "
+                "identity because Item 1 Business evidence was not available in this run."
+            ),
+            "source_ids": [],
+            "limitations": ["Item 1 business section could not be extracted."],
+        },
+    )
+
+    overview = _extract_section(report, "## 3. Company Overview")
+    limitations = _extract_section(report, "## 11. Limitations")
+
+    assert "Item 1 Business evidence was not available" in overview
+    assert "[latest_10k]" not in overview
+    assert "- Item 1 business section could not be extracted." in limitations
+
+
 def test_generate_research_report_uses_professional_no_source_language() -> None:
     report = generate_research_report(
         company_name="Apple Inc.",
@@ -497,6 +584,7 @@ def test_generate_research_report_passes_quality_validation_with_full_evidence()
                 "What changed in the latest annual filing compared with prior years?"
             ],
         },
+        business_overview=BUSINESS_OVERVIEW,
     )
 
     result = validate_report_quality(report, sources=COMPLETE_SOURCES)

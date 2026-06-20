@@ -6,12 +6,16 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from finsight_agent.app.graph.state import FinSightState
+from finsight_agent.app.services.business_overview_synthesizer import (
+    synthesize_business_overview,
+)
 from finsight_agent.app.services.company_resolver import ResolutionStatus
 from finsight_agent.app.services.compliance import (
     check_report_compliance,
     rewrite_unsafe_report,
 )
 from finsight_agent.app.services.filing_parser import (
+    extract_business_section,
     extract_risk_factors_section,
     find_latest_filing,
     normalize_accession_number,
@@ -31,6 +35,7 @@ SEC_COMPANY_FACTS_SOURCE_ID = "sec_company_facts"
 LATEST_10K_SOURCE_ID = "latest_10k"
 LATEST_10Q_SOURCE_ID = "latest_10q"
 SEC_PUBLISHER = "U.S. Securities and Exchange Commission"
+BUSINESS_SECTION = "Item 1 Business"
 RISK_FACTORS_SECTION = "Item 1A Risk Factors"
 CACHE_METADATA_FIELDS = (
     "cache_status",
@@ -141,6 +146,8 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "latest_10k": state.get("latest_10k"),
         "latest_10q": state.get("latest_10q"),
         "filing_text": state.get("filing_text"),
+        "business_sections": state.get("business_sections", []),
+        "business_overview": state.get("business_overview"),
         "risk_factors": state.get("risk_factors", []),
         "risk_themes": state.get("risk_themes", []),
         "financial_metrics": state.get("financial_metrics"),
@@ -487,91 +494,66 @@ def _make_fetch_filing_text_node(sec_client: Any):
         except Exception as exc:
             return _filing_text_unavailable_update(state, str(exc))
 
-        document_retrieved_at = _utc_timestamp()
-        section = extract_risk_factors_section(filing_text)
-        if section is None:
-            return {
-                "filing_text": filing_text,
-                "risk_factors": [],
-                "sources": _update_source_metadata(
-                    state.get("sources", []),
-                    LATEST_10K_SOURCE_ID,
-                    {
-                        "document_retrieved_at": document_retrieved_at,
-                        "document_character_count": len(filing_text),
-                        "extraction_status": "risk_factors_not_found",
-                        "extracted_sections": [],
-                        **_document_cache_source_fields(document_metadata),
-                    },
-                ),
-                "warnings": [
-                    *state.get("warnings", []),
-                    {
-                        "code": "risk_factors_unavailable",
-                        "message": "Item 1A risk-factor section could not be extracted.",
-                        "severity": "warning",
-                        "details": {
-                            "source_id": LATEST_10K_SOURCE_ID,
-                            "accession_number": accession_number,
-                            "primary_document": primary_document,
-                            "document_character_count": len(filing_text),
-                        },
-                    },
-                ],
-                "agent_steps": _append_step(
-                    state,
-                    "fetch_filing_text",
-                    "completed",
-                    (
-                        "Retrieved latest 10-K but could not extract risk-factor text; "
-                        f"document characters: {len(filing_text)}."
-                    ),
-                ),
-            }
-
         source_url = _filing_document_url(
             cik=_normalize_cik(cik),
             accession_number=accession_number,
             primary_document=primary_document,
         )
+        document_retrieved_at = _utc_timestamp()
+        business_section = extract_business_section(filing_text)
+        risk_section = extract_risk_factors_section(filing_text)
+        warnings = [
+            *state.get("warnings", []),
+            *_filing_section_warnings(
+                business_section=business_section,
+                risk_section=risk_section,
+                accession_number=accession_number,
+                primary_document=primary_document,
+                document_character_count=len(filing_text),
+            ),
+        ]
         return {
             "filing_text": filing_text,
-            "risk_factors": [
-                {
-                    "source_id": LATEST_10K_SOURCE_ID,
-                    "source_type": "sec_risk_factors",
-                    "form": latest_10k.get("form"),
-                    "filing_date": latest_10k.get("filing_date"),
-                    "accession_number": accession_number,
-                    "source_url": source_url,
-                    "source_ids": [LATEST_10K_SOURCE_ID],
-                    "section": "Item 1A",
-                    "section_label": "Risk Factors",
-                    "extracted_at": document_retrieved_at,
-                    "text_character_count": len(section.text),
-                    "text": section.text,
-                }
-            ],
+            "business_sections": _business_section_records(
+                business_section,
+                latest_10k=latest_10k,
+                accession_number=accession_number,
+                source_url=source_url,
+                extracted_at=document_retrieved_at,
+            ),
+            "risk_factors": _risk_factor_records(
+                risk_section,
+                latest_10k=latest_10k,
+                accession_number=accession_number,
+                source_url=source_url,
+                extracted_at=document_retrieved_at,
+            ),
             "sources": _update_source_metadata(
                 state.get("sources", []),
                 LATEST_10K_SOURCE_ID,
-                {
-                    "document_retrieved_at": document_retrieved_at,
-                    "document_character_count": len(filing_text),
-                    "extraction_status": "risk_factors_extracted",
-                    "extracted_sections": [RISK_FACTORS_SECTION],
-                    "risk_factor_text_character_count": len(section.text),
-                    **_document_cache_source_fields(document_metadata),
-                },
+                _filing_source_extraction_updates(
+                    business_section=business_section,
+                    risk_section=risk_section,
+                    document_retrieved_at=document_retrieved_at,
+                    document_character_count=len(filing_text),
+                    document_metadata=document_metadata,
+                ),
             ),
+            "warnings": warnings,
             "agent_steps": _append_step(
                 state,
                 "fetch_filing_text",
                 "completed",
-                (
-                    "Retrieved latest 10-K risk-factor text; "
-                    f"document characters: {len(filing_text)}, "
-                    f"extracted characters: {len(section.text)}."
+                _filing_text_extraction_message(
+                    document_character_count=len(filing_text),
+                    business_text_character_count=(
+                        len(business_section.text)
+                        if business_section is not None
+                        else None
+                    ),
+                    risk_factor_text_character_count=(
+                        len(risk_section.text) if risk_section is not None else None
+                    ),
                 ),
             ),
         }
@@ -705,20 +687,32 @@ def _extract_metrics(state: FinSightState) -> FinSightState:
 
 
 def _synthesize_research(state: FinSightState) -> FinSightState:
+    company_name = state.get("company_name") or "Unknown Company"
+    ticker = state.get("ticker") or "UNKNOWN"
+    business_overview = synthesize_business_overview(
+        company_name=company_name,
+        ticker=ticker,
+        business_sections=state.get("business_sections", []),
+        warnings=state.get("warnings", []),
+    )
     insights = synthesize_research_insights(
-        company_name=state.get("company_name") or "Unknown Company",
-        ticker=state.get("ticker") or "UNKNOWN",
+        company_name=company_name,
+        ticker=ticker,
         financial_metrics=state.get("financial_metrics"),
         risk_themes=state.get("risk_themes", []),
         warnings=state.get("warnings", []),
     )
     return {
+        "business_overview": business_overview,
         "research_insights": insights,
         "agent_steps": _append_step(
             state,
             "synthesize_research",
             "completed",
-            "Generated deterministic bull, bear, summary, and open-question points.",
+            (
+                "Generated deterministic business overview, bull, bear, summary, "
+                "and open-question points."
+            ),
         ),
     }
 
@@ -847,6 +841,7 @@ def _generate_report(state: FinSightState) -> FinSightState:
         risk_factors=state.get("risk_factors", []),
         risk_themes=state.get("risk_themes", []),
         research_insights=state.get("research_insights"),
+        business_overview=state.get("business_overview"),
         llm_report_sections=state.get("llm_report_sections"),
     )
     return {
@@ -1484,9 +1479,191 @@ def _report_evidence(state: FinSightState) -> dict[str, Any]:
         "financial_metrics": state.get("financial_metrics"),
         "risk_themes": state.get("risk_themes", []),
         "research_insights": state.get("research_insights"),
+        "business_overview": state.get("business_overview"),
         "sources": state.get("sources", []),
         "warnings": state.get("warnings", []),
     }
+
+
+def _business_section_records(
+    section: Any | None,
+    *,
+    latest_10k: dict[str, Any],
+    accession_number: str,
+    source_url: str | None,
+    extracted_at: str,
+) -> list[dict[str, Any]]:
+    if section is None:
+        return []
+
+    return [
+        {
+            "source_id": LATEST_10K_SOURCE_ID,
+            "source_type": "sec_business_section",
+            "form": latest_10k.get("form"),
+            "filing_date": latest_10k.get("filing_date"),
+            "accession_number": accession_number,
+            "source_url": source_url,
+            "source_ids": [LATEST_10K_SOURCE_ID],
+            "section": "Item 1",
+            "section_label": "Business",
+            "extracted_at": extracted_at,
+            "text_character_count": len(section.text),
+            "text": section.text,
+        }
+    ]
+
+
+def _risk_factor_records(
+    section: Any | None,
+    *,
+    latest_10k: dict[str, Any],
+    accession_number: str,
+    source_url: str | None,
+    extracted_at: str,
+) -> list[dict[str, Any]]:
+    if section is None:
+        return []
+
+    return [
+        {
+            "source_id": LATEST_10K_SOURCE_ID,
+            "source_type": "sec_risk_factors",
+            "form": latest_10k.get("form"),
+            "filing_date": latest_10k.get("filing_date"),
+            "accession_number": accession_number,
+            "source_url": source_url,
+            "source_ids": [LATEST_10K_SOURCE_ID],
+            "section": "Item 1A",
+            "section_label": "Risk Factors",
+            "extracted_at": extracted_at,
+            "text_character_count": len(section.text),
+            "text": section.text,
+        }
+    ]
+
+
+def _filing_section_warnings(
+    *,
+    business_section: Any | None,
+    risk_section: Any | None,
+    accession_number: str,
+    primary_document: str,
+    document_character_count: int,
+) -> list[dict[str, Any]]:
+    warning_details = {
+        "source_id": LATEST_10K_SOURCE_ID,
+        "accession_number": accession_number,
+        "primary_document": primary_document,
+        "document_character_count": document_character_count,
+    }
+    warnings: list[dict[str, Any]] = []
+    if business_section is None:
+        warnings.append(
+            {
+                "code": "business_section_unavailable",
+                "message": "Item 1 business section could not be extracted.",
+                "severity": "warning",
+                "details": warning_details,
+            }
+        )
+    if risk_section is None:
+        warnings.append(
+            {
+                "code": "risk_factors_unavailable",
+                "message": "Item 1A risk-factor section could not be extracted.",
+                "severity": "warning",
+                "details": warning_details,
+            }
+        )
+    return warnings
+
+
+def _filing_source_extraction_updates(
+    *,
+    business_section: Any | None,
+    risk_section: Any | None,
+    document_retrieved_at: str,
+    document_character_count: int,
+    document_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {
+        "document_retrieved_at": document_retrieved_at,
+        "document_character_count": document_character_count,
+        "extraction_status": _filing_extraction_status(
+            business_section,
+            risk_section,
+        ),
+        "extracted_sections": _extracted_filing_sections(
+            business_section,
+            risk_section,
+        ),
+        **_document_cache_source_fields(document_metadata),
+    }
+    if business_section is not None:
+        updates["business_text_character_count"] = len(business_section.text)
+    if risk_section is not None:
+        updates["risk_factor_text_character_count"] = len(risk_section.text)
+    return updates
+
+
+def _extracted_filing_sections(
+    business_section: Any | None,
+    risk_section: Any | None,
+) -> list[str]:
+    sections: list[str] = []
+    if business_section is not None:
+        sections.append(BUSINESS_SECTION)
+    if risk_section is not None:
+        sections.append(RISK_FACTORS_SECTION)
+    return sections
+
+
+def _filing_extraction_status(
+    business_section: Any | None,
+    risk_section: Any | None,
+) -> str:
+    if business_section is not None and risk_section is not None:
+        return "business_and_risk_factors_extracted"
+    if business_section is not None:
+        return "business_extracted"
+    if risk_section is not None:
+        return "risk_factors_extracted"
+    return "filing_sections_not_found"
+
+
+def _filing_text_extraction_message(
+    *,
+    document_character_count: int,
+    business_text_character_count: int | None,
+    risk_factor_text_character_count: int | None,
+) -> str:
+    if (
+        business_text_character_count is not None
+        and risk_factor_text_character_count is not None
+    ):
+        return (
+            "Retrieved latest 10-K business and risk-factor text; "
+            f"document characters: {document_character_count}, "
+            f"business characters: {business_text_character_count}, "
+            f"risk-factor characters: {risk_factor_text_character_count}."
+        )
+    if risk_factor_text_character_count is not None:
+        return (
+            "Retrieved latest 10-K risk-factor text; business section unavailable; "
+            f"document characters: {document_character_count}, "
+            f"risk-factor characters: {risk_factor_text_character_count}."
+        )
+    if business_text_character_count is not None:
+        return (
+            "Retrieved latest 10-K business text; risk-factor section unavailable; "
+            f"document characters: {document_character_count}, "
+            f"business characters: {business_text_character_count}."
+        )
+    return (
+        "Retrieved latest 10-K but could not extract business or risk-factor text; "
+        f"document characters: {document_character_count}."
+    )
 
 
 def _risk_analysis_message(themes: list[dict[str, Any]], used_llm: bool) -> str:
@@ -1503,6 +1680,8 @@ def _filing_text_unavailable_update(
 ) -> FinSightState:
     return {
         "filing_text": None,
+        "business_sections": [],
+        "business_overview": state.get("business_overview"),
         "risk_factors": [],
         "warnings": [
             *state.get("warnings", []),
