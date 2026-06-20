@@ -1292,7 +1292,13 @@ def _validate_risk_analysis(analysis: Any) -> dict[str, Any]:
         msg = "LLM risk analysis warnings must be a list."
         raise ValueError(msg)
 
-    return {"themes": themes, "warnings": warnings}
+    return {
+        "themes": themes,
+        "warnings": _normalize_llm_warnings(
+            warnings,
+            default_code="llm_risk_analysis_warning",
+        ),
+    }
 
 
 def _validate_report_draft(
@@ -1332,17 +1338,81 @@ def _validate_report_draft(
     if not isinstance(warnings, list):
         msg = "LLM report draft warnings must be a list."
         raise ValueError(msg)
-    if known_source_ids is not None and not _has_required_llm_draft_citations(
-        sections,
-        known_source_ids,
-    ):
+    if known_source_ids is not None:
+        _validate_llm_draft_citations(sections, known_source_ids)
+
+    return {
+        "sections": sections,
+        "warnings": _normalize_llm_warnings(
+            warnings,
+            default_code="llm_report_drafting_warning",
+        ),
+    }
+
+
+def _normalize_llm_warnings(
+    warnings: list[Any],
+    *,
+    default_code: str,
+) -> list[dict[str, Any]]:
+    normalized_warnings: list[dict[str, Any]] = []
+    for warning in warnings:
+        if isinstance(warning, dict):
+            message = str(warning.get("message") or warning).strip()
+            normalized_warnings.append(
+                {
+                    **warning,
+                    "code": str(warning.get("code") or default_code),
+                    "message": message,
+                    "severity": str(warning.get("severity") or "warning"),
+                }
+            )
+            continue
+
+        message = str(warning).strip()
+        if not message:
+            continue
+        normalized_warnings.append(
+            {
+                "code": default_code,
+                "message": message,
+                "severity": "warning",
+            }
+        )
+    return normalized_warnings
+
+
+def _validate_llm_draft_citations(
+    sections: dict[str, Any],
+    known_source_ids: set[str],
+) -> None:
+    unknown_citations = _unknown_llm_draft_citations(sections, known_source_ids)
+    if unknown_citations:
+        source_id = sorted(unknown_citations)[0]
+        msg = f"LLM report draft cited unknown source_id: {source_id}."
+        raise ValueError(msg)
+
+    if not _has_required_llm_draft_citations(sections, known_source_ids):
         msg = (
             "LLM report draft must include known source_id citations in "
             "source-grounded sections."
         )
         raise ValueError(msg)
 
-    return {"sections": sections, "warnings": warnings}
+
+def _unknown_llm_draft_citations(
+    sections: dict[str, Any],
+    known_source_ids: set[str],
+) -> set[str]:
+    citations: set[str] = set()
+    for value in sections.values():
+        citations.update(
+            *[
+                _extract_llm_draft_citations(section_value)
+                for section_value in _report_section_values(value)
+            ]
+        )
+    return citations - known_source_ids
 
 
 def _has_required_llm_draft_citations(

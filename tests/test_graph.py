@@ -204,6 +204,22 @@ class EmptyThemesLLMClient:
         return {"themes": [], "warnings": []}
 
 
+class WarningLLMClient(FakeLLMClient):
+    def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        result = super().summarize_risks(risk_factors)
+        return {
+            **result,
+            "warnings": ["Risk summary used condensed provider output."],
+        }
+
+    def draft_report(self, evidence: dict) -> dict:
+        result = super().draft_report(evidence)
+        return {
+            **result,
+            "warnings": ["Report draft used condensed provider output."],
+        }
+
+
 class InvalidReportDraftLLMClient(FakeLLMClient):
     def draft_report(self, evidence: dict) -> dict:
         self.last_call_metadata = {
@@ -224,6 +240,24 @@ class CitationlessReportDraftLLMClient(FakeLLMClient):
                 "risk_factors": ["LLM-written graph risk factor."],
                 "bull_case": ["LLM-written graph bull case."],
                 "bear_case": ["LLM-written graph bear case."],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
+class UnknownCitationReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": (
+                    "LLM-written graph financial performance. "
+                    "[sec_company_facts] [made_up_source]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
                 "open_questions": ["LLM-written graph open question."],
             },
             "warnings": [],
@@ -273,6 +307,15 @@ def load_fixture(name: str) -> dict:
 
 def source_by_type(sources: list[dict], source_type: str) -> dict:
     return next(source for source in sources if source["source_type"] == source_type)
+
+
+def extract_report_section(report: str, heading: str) -> str:
+    start = report.find(heading)
+    assert start != -1
+    next_heading = report.find("\n## ", start + len(heading))
+    if next_heading == -1:
+        return report[start:]
+    return report[start:next_heading]
 
 
 def assert_agent_step(
@@ -685,6 +728,23 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert "## 5. Key Financial Metrics" in result["final_report"]
     assert "[sec_company_facts]" in result["final_report"]
     assert "[latest_10k]" in result["final_report"]
+    overview_section = extract_report_section(
+        result["final_report"],
+        "## 3. Company Overview",
+    )
+    sources_section = extract_report_section(
+        result["final_report"],
+        "## 10. Sources Used",
+    )
+    assert result["business_overview"]["summary"] in overview_section
+    assert (
+        "Source: 10-K filed 2024-11-01, accession 0000320193-24-000123."
+        in overview_section
+    )
+    assert "[latest_10k]" in overview_section
+    assert expected_business_text not in result["final_report"]
+    assert "smartphones" not in result["final_report"].casefold()
+    assert "extracted sections: Item 1 Business, Item 1A Risk Factors" in sources_section
     assert result["compliance_status"] == "allowed"
     assert result["report_quality_status"] == "passed"
     assert not any(
@@ -1097,6 +1157,38 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
     assert_llm_call_has_timing(draft_call)
 
 
+def test_research_graph_preserves_llm_warnings_as_structured_workflow_warnings() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=WarningLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert {
+        "code": "llm_risk_analysis_warning",
+        "message": "Risk summary used condensed provider output.",
+        "severity": "warning",
+    } in result["warnings"]
+    assert {
+        "code": "llm_report_drafting_warning",
+        "message": "Report draft used condensed provider output.",
+        "severity": "warning",
+    } in result["warnings"]
+    assert not any(isinstance(warning, str) for warning in result["warnings"])
+    assert result["report_quality_status"] == "passed"
+
+
 def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails() -> None:
     resolver = CompanyResolver(
         companies=[
@@ -1295,6 +1387,50 @@ def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> No
         "LLM report draft must include known source_id citations in "
         "source-grounded sections."
     )
+
+
+def test_research_graph_falls_back_when_llm_report_draft_uses_unknown_citation() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=UnknownCitationReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["llm_report_sections"] is None
+    assert "LLM-written graph financial performance" not in result["final_report"]
+    assert "[made_up_source]" not in result["final_report"]
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": "LLM report draft cited unknown source_id: made_up_source.",
+        "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
+    } in result["warnings"]
+    draft_step = assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
+    )
+    assert draft_step["llm_used"] is False
+    assert draft_step["llm_fallback_reason"] == (
+        "LLM report draft cited unknown source_id: made_up_source."
+    )
+    assert result["report_quality_status"] == "passed"
 
 
 def test_research_graph_rewrites_unsafe_llm_report_language() -> None:

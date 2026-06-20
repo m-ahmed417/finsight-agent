@@ -10,6 +10,16 @@ from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 MAX_RISK_FACTOR_TEXT_CHARS = 12000
 RISK_ANALYSIS_PROMPT_VERSION = "risk_analysis:v1"
 REPORT_DRAFT_PROMPT_VERSION = "report_drafting:v1"
+SENSITIVE_PROMPT_KEY_FRAGMENTS = (
+    "api_key",
+    "secret",
+    "password",
+    "token",
+    "database_url",
+    "local_file_path",
+    "local_path",
+    "environment",
+)
 
 
 class LLMClient(Protocol):
@@ -148,6 +158,7 @@ class ChatModelLLMClient:
         prepared_risk_factors, truncation_warnings = _prepare_risk_factors_for_llm(
             risk_factors
         )
+        prompt_risk_factors = _sanitize_prompt_value(prepared_risk_factors)
         response = self._chat_model.invoke(
             [
                 {
@@ -174,7 +185,7 @@ class ChatModelLLMClient:
                                 ],
                                 "warnings": ["optional string warnings"],
                             },
-                            "risk_factors": prepared_risk_factors,
+                            "risk_factors": prompt_risk_factors,
                         },
                         sort_keys=True,
                     ),
@@ -199,6 +210,8 @@ class ChatModelLLMClient:
                         "source-grounded research brief sections only from the "
                         "provided evidence. Do not provide financial advice, "
                         "recommendations, price predictions, or unsupported facts. "
+                        "Do not invent citations. Only use source_id citation "
+                        "markers present in the provided evidence. "
                         "Use source_id citation markers from the evidence where "
                         "available. Return only valid JSON."
                     ),
@@ -218,7 +231,7 @@ class ChatModelLLMClient:
                                 "open_questions": ["string"],
                                 "warnings": ["optional string warnings"],
                             },
-                            "evidence": evidence,
+                            "evidence": _sanitize_prompt_value(evidence),
                         },
                         sort_keys=True,
                     ),
@@ -237,19 +250,28 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
         return MockLLMClient()
     if provider in {"openai", "deepseek"}:
         api_key = _api_key_for_provider(configured_settings, provider)
+        model_name = _model_name_for_provider(configured_settings, provider)
         chat_model = init_chat_model(
-            configured_settings.llm_model,
+            model_name,
             model_provider=provider,
             api_key=api_key,
         )
         return ChatModelLLMClient(
             chat_model=chat_model,
-            model_name=configured_settings.llm_model,
+            model_name=model_name,
             provider=provider,
         )
 
     msg = f"Unsupported LLM provider: {configured_settings.llm_provider}"
     raise ValueError(msg)
+
+
+def _model_name_for_provider(settings: Settings, provider: str) -> str:
+    model_name = str(settings.llm_model).strip()
+    if not model_name:
+        msg = f"LLM_MODEL must be configured when LLM_PROVIDER={provider}."
+        raise ValueError(msg)
+    return model_name
 
 
 def _api_key_for_provider(settings: Settings, provider: str) -> Any:
@@ -440,6 +462,23 @@ def _prepare_risk_factors_for_llm(
         )
 
     return prepared, warnings
+
+
+def _sanitize_prompt_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_prompt_value(item)
+            for key, item in value.items()
+            if not _is_sensitive_prompt_key(key)
+        }
+    if isinstance(value, list):
+        return [_sanitize_prompt_value(item) for item in value]
+    return value
+
+
+def _is_sensitive_prompt_key(key: Any) -> bool:
+    normalized = str(key).strip().casefold()
+    return any(fragment in normalized for fragment in SENSITIVE_PROMPT_KEY_FRAGMENTS)
 
 
 def _llm_warning(message: str) -> dict[str, str]:

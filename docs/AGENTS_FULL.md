@@ -70,7 +70,9 @@ Implemented research workflow:
   and filing documents.
 - SEC caching/diagnostic metadata where available.
 - Deterministic financial metrics extraction.
-- Filing text retrieval and risk-factor extraction.
+- Filing text retrieval, Item 1 Business extraction, and Item 1A risk-factor
+  extraction.
+- Deterministic business overview synthesis from SEC filing evidence.
 - Deterministic risk analysis fallback.
 - Optional LLM-assisted risk summarization.
 - Deterministic research insight synthesis.
@@ -81,6 +83,13 @@ Implemented research workflow:
 - Stage 4N production report grounding: scaffold-language validation,
   source-id citation checks, professional limitations, and graph-level proof
   that normal SEC-evidence runs pass report quality validation.
+- Stage 4O business overview grounding: latest 10-K Item 1 Business evidence,
+  `business_sections` and `business_overview` graph state, cited Company
+  Overview report text, and raw Item 1 text exclusion from final reports.
+- Stage 4P model-provider testing: LLM provider configuration hardening, sanitized prompt
+  evidence contracts, structured LLM fallback validation, and opt-in provider
+  smoke tests for risk analysis, report drafting, and live SEC plus LLM graph
+  execution.
 - LangGraph orchestration with typed state.
 - Structured warnings/errors instead of brittle crashes where graceful partial
   output is possible.
@@ -103,12 +112,20 @@ Implemented persistence and API capabilities:
 Current completed stage:
 
 ```text
-4N - Report Quality and Grounding
+4P - LLM Provider Integration and Agent Testing
 ```
 
-Stage 4N made generated reports production-style by removing scaffold/MVP
-language and tightening quality/citation guarantees. The next named stage has
-not been selected yet.
+Stage 4O added SEC Item 1 Business extraction and deterministic Company
+Overview grounding on top of Stage 4N report-quality guarantees. Final reports
+cite `[latest_10k]` when business evidence is used and do not copy raw Item 1
+text into the report.
+
+Use `docs/specs/4P-llm-provider-integration-agent-testing.md` as the Stage 4P
+spec. The safe model testing order is mock first, provider smoke test second,
+end-to-end live run last. Provider smoke tests use `RUN_LIVE_LLM_TESTS` and cover
+risk analysis and report drafting. The end-to-end live run uses
+`RUN_LIVE_SEC_LLM_GRAPH_TESTS` and exercises real SEC data plus the configured
+real LLM provider without making exact prose assertions.
 
 ## Development Method
 
@@ -633,10 +650,13 @@ Required:
 - Financial, risk, bull, and bear sections include source IDs when they make
   source-grounded claims.
 - Citations must refer to known source IDs where source metadata is available.
+- Company Overview should use latest 10-K Item 1 Business evidence when
+  available and cite `[latest_10k]`.
 - Sources section should list SEC data and filing sources with meaningful
   metadata.
 - Limitations section should surface missing/uncertain data.
 - Raw filing text should not be copied into the final report.
+- Raw Item 1 text should not be copied into the final report.
 - Reports should be neutral and avoid investment advice.
 
 Disallowed scaffold language includes:
@@ -724,6 +744,84 @@ Updated README/docs after behavior was correct, then ran:
 uv run pytest
 uv run ruff check .
 ```
+
+## Stage 4O Status
+
+Stage 4O is Business Overview and Filing Evidence. It is implemented.
+
+```text
+4O - Business Overview and Filing Evidence
+```
+
+It was implemented with spec-driven development plus TDD:
+
+### 4O-0: Spec
+
+Created:
+
+```text
+docs/specs/4O-business-overview-filing-evidence.md
+```
+
+### 4O-1: Filing Parser TDD
+
+Added tested parser support for latest 10-K Item 1 Business extraction while
+preserving Item 1A Risk Factors extraction behavior.
+
+### 4O-2: Graph State and Extraction Integration
+
+Added `business_sections` and `business_overview` to typed graph state. The
+workflow now extracts Item 1 Business and Item 1A Risk Factors from the same
+latest 10-K document, records source metadata, and emits
+`business_section_unavailable` when Item 1 cannot be extracted.
+
+### 4O-3: Deterministic Business Overview Synthesis
+
+Added deterministic `business_overview` synthesis from structured SEC filing
+evidence. The synthesis preserves source IDs and avoids copying raw Item 1 text.
+
+### 4O-4: Report Generator Integration
+
+Integrated `business_overview` into Company Overview report generation. When
+business evidence is available, Company Overview cites `[latest_10k]`; when it
+is missing, the report limitations surface the missing evidence.
+
+### 4O-5: Graph Proof, Docs, and Verification
+
+Added graph-level proof that normal SEC-evidence runs use Item 1 Business
+evidence in the final report, list Item 1 Business extraction metadata in
+Sources Used, avoid raw Item 1 text, and still pass report quality validation.
+
+## Stage 4P Status
+
+Stage 4P is LLM Provider Integration and Agent Testing. It is implemented.
+
+The stage spec is:
+
+```text
+docs/specs/4P-llm-provider-integration-agent-testing.md
+```
+
+Implemented so far:
+
+- `4P-0`: Wrote the Stage 4P spec.
+- `4P-1`: Hardened provider configuration for `mock`, `openai`, and `deepseek`.
+- `4P-2`: Hardened prompt/evidence contracts and prompt payload sanitization.
+- `4P-3`: Strengthened LLM output validation and deterministic fallback proof.
+- `4P-4`: Added opt-in provider smoke test coverage and docs for controlled live
+  model testing.
+- `4P-5`: Added the opt-in live SEC plus LLM graph smoke test and completed
+  controlled agent testing docs.
+
+Controlled model testing order:
+
+1. mock first with `LLM_PROVIDER=mock` and normal deterministic tests.
+2. provider smoke test second with `RUN_LIVE_LLM_TESTS=1` for risk analysis and
+   report drafting.
+3. end-to-end live run last with `RUN_LIVE_SEC_LLM_GRAPH_TESTS=1` after provider
+   smoke tests pass.
+
+Do not require real model API access in normal unit tests or default CI.
 
 ## Data Quality and Limitations
 
@@ -1023,11 +1121,12 @@ Test:
 
 ## What Is Left
 
-Post-4N likely remaining work includes:
+Post-4O likely remaining work includes:
 
-- More realistic company overview sourcing from SEC business descriptions or
-  controlled external metadata.
-- More robust filing section extraction beyond risk factors.
+- More robust filing section extraction across historical 10-K formats and
+  additional sections beyond Item 1 Business and Item 1A Risk Factors.
+- Controlled external metadata only if it can remain source-grounded and
+  citation-aware.
 - Better financial formatting, units, scaling, and period comparisons.
 - More nuanced report quality scoring and citation coverage checks.
 - More live LLM provider testing and production configuration docs.

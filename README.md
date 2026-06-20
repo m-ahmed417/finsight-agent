@@ -154,6 +154,14 @@ Reports cite known source IDs such as `[sec_company_facts]` and `[latest_10k]`
 for source-grounded financial, risk, bull-case, and bear-case claims. Missing
 data is surfaced as warnings or limitations instead of invented facts.
 
+The workflow also extracts Item 1 Business evidence from the latest 10-K when
+available. The Company Overview uses the deterministic `business_overview`
+artifact derived from that evidence, cites `[latest_10k]`, mentions filing
+metadata such as filing date or accession number, and avoids copying raw Item 1 text
+into the report. If Item 1 Business cannot be extracted, the limitation is surfaced
+through warnings or limitations instead of replacing it with external company
+descriptions.
+
 Before persistence, the workflow runs deterministic compliance checks and then
 report quality validation. Completed runs expose `compliance_status` and
 `report_quality_status`; when enough SEC-derived evidence is available, normal
@@ -265,11 +273,13 @@ OPENAI_API_KEY=
 DEEPSEEK_API_KEY=
 ```
 
-`LLM_PROVIDER` supports `mock`, `openai`, and `deepseek`. Keep `mock` for
-deterministic local development and tests. Real providers should be configured
-with a matching `LLM_MODEL` and provider API credentials in the environment.
-Use `OPENAI_API_KEY` for `LLM_PROVIDER=openai` and `DEEPSEEK_API_KEY` for
-`LLM_PROVIDER=deepseek`.
+`LLM_PROVIDER` supports `mock`, `openai`, and `deepseek`. Keep
+`LLM_PROVIDER=mock` for deterministic local development and tests. To test a
+real provider, set `LLM_PROVIDER=openai` or `LLM_PROVIDER=deepseek` with a
+matching `LLM_MODEL`; real providers require a non-empty `LLM_MODEL`. Use
+`OPENAI_API_KEY` for `LLM_PROVIDER=openai` and `DEEPSEEK_API_KEY` for
+`LLM_PROVIDER=deepseek`. Please do not store API keys in committed files; configure
+them through your local environment or an uncommitted `.env`.
 
 `RESEARCH_RUN_STALE_AFTER_SECONDS` controls startup recovery for abandoned
 background research runs. The default is `3600` seconds. During startup, FinSight
@@ -298,7 +308,9 @@ The research workflow records SEC diagnostics in the persisted `agent_steps`,
 - recorded source IDs such as `sec_submissions`, `sec_company_facts`, and
   `latest_10k`
 - latest 10-K and 10-Q accession numbers and filing dates
-- filing document and extracted risk-factor text character counts
+- filing document plus extracted business and risk-factor text character counts
+- latest 10-K extracted sections such as Item 1 Business and Item 1A Risk
+  Factors
 - metric fiscal years and XBRL tag counts used during deterministic extraction
 - SEC cache status for source fetches:
   - `cache_status` and `cache_key` on JSON sources such as `sec_submissions`
@@ -309,8 +321,8 @@ The research workflow records SEC diagnostics in the persisted `agent_steps`,
   - `cache_age_seconds`, `cache_ttl_seconds`, `cache_expires_at`, and
     `cache_stale` on JSON sources
   - matching `document_cache_*` fields on filing document sources
-- structured warning details when filing text or risk-factor extraction is
-  unavailable
+- structured warning details when filing text, business-section extraction, or
+  risk-factor extraction is unavailable
 
 Cache statuses are:
 
@@ -334,12 +346,19 @@ stance.
 
 ### Live Smoke Tests
 
-Run an opt-in live LLM smoke test:
+Run an opt-in live LLM smoke test for provider-backed risk analysis and report
+drafting:
 
 ```powershell
+$env:LLM_PROVIDER="openai"
+$env:LLM_MODEL="gpt-4.1-mini"
+$env:OPENAI_API_KEY="..."
 $env:RUN_LIVE_LLM_TESTS="1"
 uv run pytest tests/test_live_llm.py
 ```
+
+For DeepSeek, use `LLM_PROVIDER=deepseek`, set a DeepSeek-compatible
+`LLM_MODEL`, and provide `DEEPSEEK_API_KEY` instead.
 
 Run an opt-in live SEC smoke test:
 
@@ -357,9 +376,25 @@ $env:RUN_LIVE_SEC_GRAPH_TESTS="1"
 uv run pytest tests/test_live_sec_graph.py
 ```
 
+Run an opt-in end-to-end live SEC plus live LLM graph smoke test:
+
+```powershell
+$env:SEC_USER_AGENT="FinSight/0.1 your-name@example.com"
+$env:LLM_PROVIDER="openai"
+$env:LLM_MODEL="gpt-4.1-mini"
+$env:OPENAI_API_KEY="..."
+$env:RUN_LIVE_SEC_LLM_GRAPH_TESTS="1"
+uv run pytest tests/test_live_sec_llm_graph.py
+```
+
 Live smoke tests are skipped by default and should be run deliberately. The live
-SEC test uses a temporary cache directory, respects `SEC_REQUEST_INTERVAL_SECONDS`,
-and fetches:
+LLM smoke test exercises provider-backed risk analysis and report drafting
+without making exact prose assertions. Use the safe testing order: mock first,
+provider smoke test second, end-to-end live run last. These live tests are not
+intended for normal CI.
+
+The live SEC test uses a temporary cache directory, respects
+`SEC_REQUEST_INTERVAL_SECONDS`, and fetches:
 
 - SEC company tickers
 - Apple's submissions metadata
@@ -373,6 +408,12 @@ The live SEC graph test runs the LangGraph workflow for Apple using the real SEC
 client, the deterministic local company resolver, and the mock LLM provider. It
 asserts report/state shape, required safety fields, source metadata, cache
 diagnostics, and compliance status without asserting exact financial values.
+
+The live SEC plus LLM graph test runs the same Apple workflow with real SEC data
+and the configured real LLM provider. It verifies the final report disclaimer,
+known citations, compliance status, report quality status, LLM call events,
+usage summary, and deterministic fallback visibility when provider output is
+unavailable or rejected. It also avoids exact model prose assertions.
 
 ## Database Migrations
 

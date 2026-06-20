@@ -27,7 +27,8 @@ Already implemented:
 - SEC client for submissions, company facts, filing metadata, and filing
   documents.
 - Deterministic financial metrics extraction.
-- Filing text and risk-factor extraction.
+- Filing text, Item 1 Business extraction, and Item 1A risk-factor extraction.
+- Deterministic business overview synthesis from SEC filing evidence.
 - Deterministic and optional LLM-assisted risk/theme analysis.
 - Research insight synthesis.
 - LangGraph workflow orchestration.
@@ -39,17 +40,33 @@ Already implemented:
 - Stage 4N report-quality grounding: production-style generated reports,
   scaffold-language validation, source-id citation checks, professional
   limitations, and graph-level report-quality proof.
+- Stage 4O business overview grounding: latest 10-K Item 1 Business evidence,
+  `business_sections` and `business_overview` graph state, cited Company
+  Overview report text, and raw Item 1 text exclusion from final reports.
+- Stage 4P model-provider testing: LLM provider configuration hardening, sanitized prompt
+  evidence contracts, structured LLM fallback validation, and opt-in provider
+  smoke tests for risk analysis, report drafting, and live SEC plus LLM graph
+  execution.
 - GitHub Actions CI for tests and linting.
 
 Current completed stage:
 
 ```text
-4N - Report Quality and Grounding
+4P - LLM Provider Integration and Agent Testing
 ```
 
-Stage 4N removed scaffold/MVP language from generated reports and made final
-reports production-style, neutral, source-grounded, citation-aware, and honest
-about limitations. The next named stage has not been selected yet.
+Stage 4O added SEC Item 1 Business extraction and deterministic business
+overview grounding on top of the Stage 4N report-quality foundation. Final
+reports keep the 11-section structure, cite `[latest_10k]` when Company Overview
+uses business evidence, and avoid copying raw Item 1 text.
+
+Stage 4P added controlled model API testing around the existing LLM adapter.
+Use `docs/specs/4P-llm-provider-integration-agent-testing.md` as the stage spec.
+The safe testing order is mock first, provider smoke test second, end-to-end live run last.
+Provider smoke tests use `RUN_LIVE_LLM_TESTS` and cover risk analysis
+and report drafting. The end-to-end live run uses
+`RUN_LIVE_SEC_LLM_GRAPH_TESTS` and exercises real SEC data plus the configured
+real LLM provider without making exact prose assertions.
 
 ## Development Method
 
@@ -64,10 +81,12 @@ For a new stage:
 5. Run verification.
 6. Update docs when behavior changes.
 
-The Stage 4N spec is:
+The recent stage specs are:
 
 ```text
 docs/specs/4N-report-quality-grounding.md
+docs/specs/4O-business-overview-filing-evidence.md
+docs/specs/4P-llm-provider-integration-agent-testing.md
 ```
 
 ## Core Rules
@@ -167,7 +186,10 @@ Reports must:
 - Include the required disclaimer.
 - Include sources and limitations.
 - Use known `source_id` citations for source-grounded claims.
+- Use latest 10-K Item 1 Business evidence for Company Overview when available.
+- Cite `[latest_10k]` when Company Overview uses business-section evidence.
 - Avoid raw copied filing text.
+- Avoid raw Item 1 text in final reports.
 - Avoid financial advice language.
 - Avoid scaffold language such as "MVP draft", "future versions will",
   "pending deterministic synthesis", "not generated yet", and "future
@@ -219,6 +241,10 @@ Add or update tests with behavior changes. Prioritize deterministic tests:
 Do not call real SEC or real LLM services in normal unit tests. Live tests must
 remain opt-in.
 
+For real LLM providers, keep `LLM_PROVIDER=mock` for normal local and CI
+verification. Use provider smoke test runs only with explicit flags such as
+`RUN_LIVE_LLM_TESTS=1`; never require model API access in normal tests.
+
 Before finishing code changes, run:
 
 ```powershell
@@ -226,7 +252,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-## Stage 4N Status
+## Stage 4N and 4O Status
 
 Stage 4N was implemented in small, tested slices:
 
@@ -235,5 +261,31 @@ Stage 4N was implemented in small, tested slices:
 3. `4N-2`: Improved deterministic report generation with failing tests first.
 4. `4N-3`: Proved end-to-end graph report quality.
 5. `4N-4`: Updated docs and ran full verification.
+
+Stage 4O was implemented in small, tested slices:
+
+```text
+4O - Business Overview and Filing Evidence
+```
+
+1. `4O-0`: Wrote `docs/specs/4O-business-overview-filing-evidence.md`.
+2. `4O-1`: Added tested Item 1 Business filing parser support.
+3. `4O-2`: Added `business_sections` and `business_overview` graph state and
+   extraction integration.
+4. `4O-3`: Added deterministic business overview synthesis.
+5. `4O-4`: Integrated business overview evidence into report generation.
+6. `4O-5`: Proved graph-level final report grounding, updated docs, and ran
+   full verification.
+
+Stage 4P was implemented in small, tested slices:
+
+1. `4P-0`: Wrote `docs/specs/4P-llm-provider-integration-agent-testing.md`.
+2. `4P-1`: Hardened LLM provider configuration for real providers.
+3. `4P-2`: Hardened prompt/evidence contracts and prompt sanitization.
+4. `4P-3`: Strengthened LLM output validation and deterministic fallback proof.
+5. `4P-4`: Added provider smoke test coverage and docs for controlled live model
+   testing.
+6. `4P-5`: Added the opt-in live SEC plus LLM graph smoke test and completed
+   controlled agent testing docs.
 
 When in doubt, keep the MVP small, traceable, source-grounded, and safe.

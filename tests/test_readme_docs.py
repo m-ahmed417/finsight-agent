@@ -150,6 +150,9 @@ def test_readme_documents_report_quality_and_grounding() -> None:
         "11-section structure",
         "research-only disclaimer",
         "not financial advice",
+        "Item 1 Business",
+        "Company Overview",
+        "raw Item 1 text",
         "`[sec_company_facts]`",
         "`[latest_10k]`",
         "warnings or limitations",
@@ -162,3 +165,77 @@ def test_readme_documents_report_quality_and_grounding() -> None:
         "no sources were recorded",
     ]:
         assert phrase in workflow_section
+
+
+def test_agent_docs_document_stage_4o_completion() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4O - Business Overview and Filing Evidence" in text, path
+        assert "docs/specs/4O-business-overview-filing-evidence.md" in text, path
+        assert "Item 1 Business" in text, path
+        assert "business_overview" in text, path
+        assert "Company Overview" in text, path
+        assert "raw Item 1 text" in text, path
+
+
+def test_readme_documents_llm_provider_testing_workflow() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "## Configuration" in readme
+    assert "### Live Smoke Tests" in readme
+    configuration_section = readme.split("## Configuration", maxsplit=1)[1]
+    live_section = readme.split("### Live Smoke Tests", maxsplit=1)[1]
+
+    for phrase in [
+        "LLM_PROVIDER=mock",
+        "LLM_PROVIDER=openai",
+        "LLM_PROVIDER=deepseek",
+        "LLM_MODEL",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "real providers require a non-empty `LLM_MODEL`",
+        "do not store API keys in committed files",
+    ]:
+        assert phrase in configuration_section
+
+    for phrase in [
+        "RUN_LIVE_LLM_TESTS",
+        "RUN_LIVE_SEC_LLM_GRAPH_TESTS",
+        "tests/test_live_sec_llm_graph.py",
+        "provider-backed risk analysis and report drafting",
+        "mock first",
+        "provider smoke test second",
+        "end-to-end live run last",
+        "LLM call events",
+        "usage summary",
+        "deterministic fallback",
+        "skipped by default",
+        "normal CI",
+    ]:
+        assert phrase in live_section
+
+
+def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4P - LLM Provider Integration and Agent Testing" in text, path
+        assert "docs/specs/4P-llm-provider-integration-agent-testing.md" in text, path
+        assert "provider smoke test" in text, path
+        assert "RUN_LIVE_LLM_TESTS" in text, path
+        assert "RUN_LIVE_SEC_LLM_GRAPH_TESTS" in text, path
+        assert "mock first" in text, path
+        assert "end-to-end live run last" in text, path
+        assert "report drafting" in text, path
+        assert "4P-5" in text, path
