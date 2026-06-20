@@ -77,4 +77,28 @@ def test_sqlite_init_backfills_research_run_status_columns(
         "started_at",
         "completed_at",
         "duration_seconds",
+        "llm_provider",
+        "llm_model",
+        "llm_used",
+        "llm_fallback_reason",
     }.issubset(agent_step_column_names)
+
+    table_names = set(inspect(engine).get_table_names())
+    assert "llm_call_events" in table_names
+    llm_call_column_names = {
+        column["name"] for column in inspect(engine).get_columns("llm_call_events")
+    }
+    assert {
+        "research_run_id",
+        "node_name",
+        "task",
+        "status",
+        "llm_provider",
+        "llm_model",
+        "prompt_version",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "fallback_used",
+        "fallback_reason",
+    }.issubset(llm_call_column_names)

@@ -35,6 +35,7 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "alembic_version",
         "research_runs",
         "agent_steps",
+        "llm_call_events",
     }
     research_run_columns = {
         column["name"] for column in inspector.get_columns("research_runs")
@@ -72,5 +73,35 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "started_at",
         "completed_at",
         "duration_seconds",
+        "llm_provider",
+        "llm_model",
+        "llm_used",
+        "llm_fallback_reason",
         "created_at",
     }.issubset(agent_step_columns)
+
+    llm_call_event_columns = {
+        column["name"] for column in inspector.get_columns("llm_call_events")
+    }
+    assert {
+        "id",
+        "research_run_id",
+        "node_name",
+        "task",
+        "status",
+        "llm_provider",
+        "llm_model",
+        "prompt_version",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "provider_request_id",
+        "error_type",
+        "error_message",
+        "fallback_used",
+        "fallback_reason",
+        "created_at",
+    }.issubset(llm_call_event_columns)

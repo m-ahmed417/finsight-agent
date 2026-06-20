@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import Session
 
-from finsight_agent.app.db.models import AgentStep, ResearchRun, utc_now
+from finsight_agent.app.db.models import AgentStep, LLMCallEvent, ResearchRun, utc_now
 from finsight_agent.app.research_status import (
     IN_PROGRESS_RESEARCH_STATUSES,
     RESEARCH_STATUS_COMPLETED,
@@ -217,6 +217,7 @@ class ResearchRunRepository:
 
         _apply_graph_result_to_run(run, status=status, graph_result=graph_result)
         self._replace_agent_steps(run_id, graph_result.get("agent_steps", []))
+        self._replace_llm_call_events(run_id, graph_result.get("llm_call_events", []))
         self._session.commit()
         self._session.refresh(run)
         return run
@@ -237,6 +238,7 @@ class ResearchRunRepository:
         self._session.add(run)
         self._session.flush()
         self._add_agent_steps(run_id, graph_result.get("agent_steps", []))
+        self._add_llm_call_events(run_id, graph_result.get("llm_call_events", []))
         self._session.commit()
         self._session.refresh(run)
         return run
@@ -249,6 +251,14 @@ class ResearchRunRepository:
             select(AgentStep)
             .where(AgentStep.research_run_id == str(run_id))
             .order_by(AgentStep.id)
+        )
+        return list(self._session.scalars(statement))
+
+    def get_llm_call_events_for_run(self, run_id: UUID) -> list[LLMCallEvent]:
+        statement = (
+            select(LLMCallEvent)
+            .where(LLMCallEvent.research_run_id == str(run_id))
+            .order_by(LLMCallEvent.id)
         )
         return list(self._session.scalars(statement))
 
@@ -268,6 +278,13 @@ class ResearchRunRepository:
         self._session.execute(statement)
         self._add_agent_steps(run_id, steps)
 
+    def _replace_llm_call_events(self, run_id: UUID, events: list[dict]) -> None:
+        statement = delete(LLMCallEvent).where(
+            LLMCallEvent.research_run_id == str(run_id)
+        )
+        self._session.execute(statement)
+        self._add_llm_call_events(run_id, events)
+
     def _add_agent_steps(self, run_id: UUID, steps: list[dict]) -> None:
         for step in steps:
             self._session.add(
@@ -280,6 +297,35 @@ class ResearchRunRepository:
                     started_at=step.get("started_at"),
                     completed_at=step.get("completed_at"),
                     duration_seconds=step.get("duration_seconds"),
+                    llm_provider=step.get("llm_provider"),
+                    llm_model=step.get("llm_model"),
+                    llm_used=step.get("llm_used"),
+                    llm_fallback_reason=step.get("llm_fallback_reason"),
+                )
+            )
+
+    def _add_llm_call_events(self, run_id: UUID, events: list[dict]) -> None:
+        for event in events:
+            self._session.add(
+                LLMCallEvent(
+                    research_run_id=str(run_id),
+                    node_name=event["node_name"],
+                    task=event["task"],
+                    status=event["status"],
+                    llm_provider=event.get("llm_provider"),
+                    llm_model=event.get("llm_model"),
+                    prompt_version=event.get("prompt_version"),
+                    started_at=event.get("started_at"),
+                    completed_at=event.get("completed_at"),
+                    duration_seconds=event.get("duration_seconds"),
+                    input_tokens=event.get("input_tokens"),
+                    output_tokens=event.get("output_tokens"),
+                    total_tokens=event.get("total_tokens"),
+                    provider_request_id=event.get("provider_request_id"),
+                    error_type=event.get("error_type"),
+                    error_message=event.get("error_message"),
+                    fallback_used=event.get("fallback_used"),
+                    fallback_reason=event.get("fallback_reason"),
                 )
             )
 

@@ -229,7 +229,13 @@ def test_execute_research_run_marks_completed_when_graph_has_no_errors() -> None
     assert repository.running_run_ids == [run_id]
     assert graph_runner.invocations == [{"user_query": "AAPL"}]
     assert repository.completed_updates == [
-        {"run_id": run_id, "graph_result": graph_result}
+        {
+            "run_id": run_id,
+            "graph_result": {
+                **graph_result,
+                "llm_call_events": [],
+            },
+        }
     ]
     assert repository.failed_graph_updates == []
     assert repository.failed_updates == []
@@ -272,7 +278,13 @@ def test_execute_research_run_marks_failed_when_graph_result_has_errors() -> Non
     assert graph_runner.invocations == [{"user_query": "UNKNOWN"}]
     assert repository.completed_updates == []
     assert repository.failed_graph_updates == [
-        {"run_id": run_id, "graph_result": graph_result}
+        {
+            "run_id": run_id,
+            "graph_result": {
+                **graph_result,
+                "llm_call_events": [],
+            },
+        }
     ]
     assert repository.failed_updates == []
 

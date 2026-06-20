@@ -168,8 +168,41 @@ class FakeResearchRepository:
                 started_at=step.get("started_at"),
                 completed_at=step.get("completed_at"),
                 duration_seconds=step.get("duration_seconds"),
+                llm_provider=step.get("llm_provider"),
+                llm_model=step.get("llm_model"),
+                llm_used=step.get("llm_used"),
+                llm_fallback_reason=step.get("llm_fallback_reason"),
             )
             for index, step in enumerate(run.agent_steps, start=1)
+        ]
+
+    def get_llm_call_events_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
+        run = self.runs.get(run_id)
+        if run is None:
+            return []
+        return [
+            SimpleNamespace(
+                id=index,
+                research_run_id=str(run_id),
+                node_name=event["node_name"],
+                task=event["task"],
+                status=event["status"],
+                llm_provider=event.get("llm_provider"),
+                llm_model=event.get("llm_model"),
+                prompt_version=event.get("prompt_version"),
+                started_at=event.get("started_at"),
+                completed_at=event.get("completed_at"),
+                duration_seconds=event.get("duration_seconds"),
+                input_tokens=event.get("input_tokens"),
+                output_tokens=event.get("output_tokens"),
+                total_tokens=event.get("total_tokens"),
+                provider_request_id=event.get("provider_request_id"),
+                error_type=event.get("error_type"),
+                error_message=event.get("error_message"),
+                fallback_used=event.get("fallback_used"),
+                fallback_reason=event.get("fallback_reason"),
+            )
+            for index, event in enumerate(run.llm_call_events, start=1)
         ]
 
     def _update_from_graph_result(
@@ -262,6 +295,7 @@ def _make_run(
         errors_json=result.get("errors", []),
         sources_json=result.get("sources", []),
         agent_steps=result.get("agent_steps", []),
+        llm_call_events=result.get("llm_call_events", []),
     )
 
 
@@ -991,6 +1025,10 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
                     tzinfo=timezone.utc,
                 ),
                 "duration_seconds": 2.0,
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "llm_used": True,
+                "llm_fallback_reason": None,
             },
             {
                 "node_name": "fetch_sec_data",
@@ -1022,6 +1060,10 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
             "started_at": "2026-06-16T13:00:00Z",
             "completed_at": "2026-06-16T13:00:02Z",
             "duration_seconds": 2.0,
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "llm_used": True,
+            "llm_fallback_reason": None,
         },
         {
             "id": 2,
@@ -1033,8 +1075,210 @@ def test_get_research_steps_returns_stored_steps(client: TestClient) -> None:
             "started_at": None,
             "completed_at": None,
             "duration_seconds": None,
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_used": None,
+            "llm_fallback_reason": None,
         },
     ]
+
+
+def test_get_research_llm_calls_returns_stored_model_call_audit_events(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "financial_metrics": {"periods": []},
+        "warnings": [],
+        "errors": [],
+        "sources": [],
+        "agent_steps": [],
+        "llm_call_events": [
+            {
+                "node_name": "analyze_risks",
+                "task": "risk_analysis",
+                "status": "completed",
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "prompt_version": "risk_analysis:v1",
+                "started_at": datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc),
+                "completed_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                "duration_seconds": 1.0,
+                "input_tokens": 120,
+                "output_tokens": 42,
+                "total_tokens": 162,
+                "provider_request_id": "req_123",
+                "fallback_used": False,
+            },
+            {
+                "node_name": "draft_report",
+                "task": "report_drafting",
+                "status": "failed",
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "prompt_version": "report_drafting:v1",
+                "started_at": datetime(2026, 6, 16, 13, 0, 2, tzinfo=timezone.utc),
+                "completed_at": datetime(
+                    2026,
+                    6,
+                    16,
+                    13,
+                    0,
+                    3,
+                    tzinfo=timezone.utc,
+                ),
+                "duration_seconds": 1.0,
+                "provider_request_id": "req_456",
+                "error_type": "LLMClientError",
+                "error_message": "LLM response must contain valid JSON.",
+                "fallback_used": True,
+                "fallback_reason": "LLM response must contain valid JSON.",
+            },
+        ],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+    response = client.get(f"/research/{run_id}/llm-calls")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": 1,
+            "research_run_id": run_id,
+            "node_name": "analyze_risks",
+            "task": "risk_analysis",
+            "status": "completed",
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "prompt_version": "risk_analysis:v1",
+            "started_at": "2026-06-16T13:00:00Z",
+            "completed_at": "2026-06-16T13:00:01Z",
+            "duration_seconds": 1.0,
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+            "provider_request_id": "req_123",
+            "error_type": None,
+            "error_message": None,
+            "fallback_used": False,
+            "fallback_reason": None,
+        },
+        {
+            "id": 2,
+            "research_run_id": run_id,
+            "node_name": "draft_report",
+            "task": "report_drafting",
+            "status": "failed",
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "prompt_version": "report_drafting:v1",
+            "started_at": "2026-06-16T13:00:02Z",
+            "completed_at": "2026-06-16T13:00:03Z",
+            "duration_seconds": 1.0,
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "provider_request_id": "req_456",
+            "error_type": "LLMClientError",
+            "error_message": "LLM response must contain valid JSON.",
+            "fallback_used": True,
+            "fallback_reason": "LLM response must contain valid JSON.",
+        },
+    ]
+
+
+def test_get_research_llm_usage_returns_rollup_summary(client: TestClient) -> None:
+    repository = FakeResearchRepository()
+    graph_result = {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "financial_metrics": {"periods": []},
+        "warnings": [],
+        "errors": [],
+        "sources": [],
+        "agent_steps": [],
+        "llm_call_events": [
+            {
+                "node_name": "analyze_risks",
+                "task": "risk_analysis",
+                "status": "completed",
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "prompt_version": "risk_analysis:v1",
+                "duration_seconds": 1.0,
+                "input_tokens": 120,
+                "output_tokens": 42,
+                "total_tokens": 162,
+                "fallback_used": False,
+            },
+            {
+                "node_name": "draft_report",
+                "task": "report_drafting",
+                "status": "failed",
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "prompt_version": "report_drafting:v1",
+                "duration_seconds": 2.5,
+                "input_tokens": 300,
+                "output_tokens": None,
+                "total_tokens": None,
+                "fallback_used": True,
+                "fallback_reason": "LLM response must contain valid JSON.",
+            },
+            {
+                "node_name": "draft_report",
+                "task": "report_drafting",
+                "status": "skipped",
+                "prompt_version": "report_drafting:v1",
+                "fallback_used": True,
+                "fallback_reason": "No report-drafting LLM client configured.",
+            },
+        ],
+    }
+    job_executor = FakeResearchJobExecutor(
+        repository=repository,
+        graph_result=graph_result,
+    )
+    app.dependency_overrides[get_research_repository] = lambda: repository
+    app.dependency_overrides[get_research_job_executor] = lambda: job_executor
+
+    post_response = client.post("/research", json={"query": "AAPL"})
+    run_id = post_response.json()["run_id"]
+    response = client.get(f"/research/{run_id}/llm-usage")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": run_id,
+        "status": "completed",
+        "total_calls": 3,
+        "completed_calls": 1,
+        "failed_calls": 1,
+        "skipped_calls": 1,
+        "fallback_count": 2,
+        "total_duration_seconds": 3.5,
+        "total_input_tokens": 420,
+        "total_output_tokens": 42,
+        "total_tokens": 162,
+        "providers": ["openai"],
+        "models": ["gpt-test-model"],
+    }
 
 
 def test_get_research_progress_returns_stored_step_summary(client: TestClient) -> None:
@@ -1062,6 +1306,10 @@ def test_get_research_progress_returns_stored_step_summary(client: TestClient) -
                     tzinfo=timezone.utc,
                 ),
                 "duration_seconds": 1.0,
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "llm_used": True,
+                "llm_fallback_reason": None,
             },
             {
                 "node_name": "fetch_sec_data",
@@ -1086,6 +1334,10 @@ def test_get_research_progress_returns_stored_step_summary(client: TestClient) -
                     tzinfo=timezone.utc,
                 ),
                 "duration_seconds": 2.0,
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "llm_used": True,
+                "llm_fallback_reason": None,
             },
         ],
     }
@@ -1120,6 +1372,10 @@ def test_get_research_progress_returns_stored_step_summary(client: TestClient) -
             "started_at": "2026-06-16T13:00:01Z",
             "completed_at": "2026-06-16T13:00:03Z",
             "duration_seconds": 2.0,
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "llm_used": True,
+            "llm_fallback_reason": None,
         },
     }
 
@@ -1167,6 +1423,12 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     steps_response_schema = openapi["paths"]["/research/{run_id}/steps"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
+    llm_calls_response_schema = openapi["paths"]["/research/{run_id}/llm-calls"][
+        "get"
+    ]["responses"]["200"]["content"]["application/json"]["schema"]
+    llm_usage_response_schema = openapi["paths"]["/research/{run_id}/llm-usage"][
+        "get"
+    ]["responses"]["200"]["content"]["application/json"]["schema"]
     progress_response_schema = openapi["paths"]["/research/{run_id}/progress"]["get"][
         "responses"
     ]["200"]["content"]["application/json"]["schema"]
@@ -1209,6 +1471,12 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     assert steps_response_schema["items"]["$ref"] == (
         "#/components/schemas/AgentStepResponse"
     )
+    assert llm_calls_response_schema["items"]["$ref"] == (
+        "#/components/schemas/LLMCallEventResponse"
+    )
+    assert llm_usage_response_schema["$ref"] == (
+        "#/components/schemas/LLMUsageSummaryResponse"
+    )
     assert progress_response_schema["$ref"] == (
         "#/components/schemas/ResearchProgressResponse"
     )
@@ -1223,6 +1491,49 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     assert_openapi_number_property(
         schemas["AgentStepResponse"]["properties"]["duration_seconds"]
     )
+    assert schemas["AgentStepResponse"]["properties"]["llm_provider"]["anyOf"][0][
+        "type"
+    ] == "string"
+    assert schemas["AgentStepResponse"]["properties"]["llm_model"]["anyOf"][0][
+        "type"
+    ] == "string"
+    assert schemas["AgentStepResponse"]["properties"]["llm_used"]["anyOf"][0][
+        "type"
+    ] == "boolean"
+    assert schemas["AgentStepResponse"]["properties"]["llm_fallback_reason"]["anyOf"][
+        0
+    ]["type"] == "string"
+    llm_call_properties = schemas["LLMCallEventResponse"]["properties"]
+    assert llm_call_properties["node_name"]["type"] == "string"
+    assert llm_call_properties["task"]["type"] == "string"
+    assert llm_call_properties["status"]["type"] == "string"
+    assert llm_call_properties["llm_provider"]["anyOf"][0]["type"] == "string"
+    assert llm_call_properties["llm_model"]["anyOf"][0]["type"] == "string"
+    assert llm_call_properties["prompt_version"]["anyOf"][0]["type"] == "string"
+    assert_openapi_datetime_property(llm_call_properties["started_at"])
+    assert_openapi_datetime_property(llm_call_properties["completed_at"])
+    assert_openapi_number_property(llm_call_properties["duration_seconds"])
+    assert_openapi_integer_property(llm_call_properties["input_tokens"])
+    assert_openapi_integer_property(llm_call_properties["output_tokens"])
+    assert_openapi_integer_property(llm_call_properties["total_tokens"])
+    assert llm_call_properties["fallback_used"]["anyOf"][0]["type"] == "boolean"
+    llm_usage_properties = schemas["LLMUsageSummaryResponse"]["properties"]
+    assert_openapi_uuid_property(llm_usage_properties["run_id"])
+    assert llm_usage_properties["status"]["enum"] == [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+    ]
+    assert_openapi_integer_property(llm_usage_properties["total_calls"])
+    assert_openapi_integer_property(llm_usage_properties["completed_calls"])
+    assert_openapi_integer_property(llm_usage_properties["failed_calls"])
+    assert_openapi_integer_property(llm_usage_properties["skipped_calls"])
+    assert_openapi_integer_property(llm_usage_properties["fallback_count"])
+    assert_openapi_number_property(llm_usage_properties["total_duration_seconds"])
+    assert_openapi_integer_property(llm_usage_properties["total_input_tokens"])
+    assert_openapi_integer_property(llm_usage_properties["total_output_tokens"])
+    assert_openapi_integer_property(llm_usage_properties["total_tokens"])
     source_properties = schemas["SourceMetadata"]["properties"]
     assert {
         "cache_status",
@@ -1246,6 +1557,8 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
         "ResearchRunSummary",
         "ResearchProgressResponse",
         "AgentStepResponse",
+        "LLMCallEventResponse",
+        "LLMUsageSummaryResponse",
     }.issubset(schemas)
     progress_properties = schemas["ResearchProgressResponse"]["properties"]
     assert {
@@ -1311,6 +1624,28 @@ def test_get_research_steps_returns_404_for_unknown_run_id(client: TestClient) -
     assert response.status_code == 404
 
 
+def test_get_research_llm_calls_returns_404_for_unknown_run_id(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{uuid4()}/llm-calls")
+
+    assert response.status_code == 404
+
+
+def test_get_research_llm_usage_returns_404_for_unknown_run_id(
+    client: TestClient,
+) -> None:
+    repository = FakeResearchRepository()
+    app.dependency_overrides[get_research_repository] = lambda: repository
+
+    response = client.get(f"/research/{uuid4()}/llm-usage")
+
+    assert response.status_code == 404
+
+
 def test_get_research_progress_returns_404_for_unknown_run_id(
     client: TestClient,
 ) -> None:
@@ -1338,6 +1673,13 @@ def assert_openapi_number_property(schema: dict) -> None:
         return
 
     assert any(option.get("type") == "number" for option in schema.get("anyOf", []))
+
+
+def assert_openapi_integer_property(schema: dict) -> None:
+    if schema.get("type") == "integer":
+        return
+
+    assert any(option.get("type") == "integer" for option in schema.get("anyOf", []))
 
 
 def assert_openapi_uuid_property(schema: dict) -> None:

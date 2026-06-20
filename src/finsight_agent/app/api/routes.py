@@ -17,13 +17,15 @@ from finsight_agent.app.api.schemas import (
     AgentStepResponse,
     CompanySearchResult,
     HealthResponse,
+    LLMCallEventResponse,
+    LLMUsageSummaryResponse,
     ResearchProgressResponse,
     ResearchRequest,
     ResearchResponse,
     ResearchRunListResponse,
     ResearchRunSummary,
 )
-from finsight_agent.app.db.models import AgentStep, ResearchRun
+from finsight_agent.app.db.models import AgentStep, LLMCallEvent, ResearchRun
 from finsight_agent.app.db.repository import ResearchRunListCursor, ResearchRunRepository
 from finsight_agent.app.research_status import ResearchStatus
 from finsight_agent.app.services.company_resolver import CompanyResolver
@@ -33,6 +35,7 @@ from finsight_agent.app.services.research_job import (
     enqueue_research_run,
     retry_failed_research_run,
 )
+from finsight_agent.app.services.llm_usage import summarize_llm_usage
 
 router = APIRouter()
 
@@ -236,6 +239,42 @@ def get_research_steps(
     return [_agent_step_to_response(step) for step in repository.get_steps_for_run(run_id)]
 
 
+@router.get("/research/{run_id}/llm-calls", response_model=list[LLMCallEventResponse])
+def get_research_llm_calls(
+    run_id: UUID,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> list[LLMCallEventResponse]:
+    run = repository.get_by_id(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        )
+
+    return [
+        _llm_call_event_to_response(event)
+        for event in repository.get_llm_call_events_for_run(run_id)
+    ]
+
+
+@router.get("/research/{run_id}/llm-usage", response_model=LLMUsageSummaryResponse)
+def get_research_llm_usage(
+    run_id: UUID,
+    repository: ResearchRunRepository = Depends(get_research_repository),
+) -> LLMUsageSummaryResponse:
+    run = repository.get_by_id(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Research run not found.",
+        )
+
+    return _llm_usage_summary_to_response(
+        run,
+        repository.get_llm_call_events_for_run(run_id),
+    )
+
+
 def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
     return ResearchResponse(
         run_id=UUID(run.id),
@@ -387,6 +426,45 @@ def _agent_step_to_response(step: AgentStep) -> AgentStepResponse:
         started_at=_nullable_as_utc(step.started_at),
         completed_at=_nullable_as_utc(step.completed_at),
         duration_seconds=step.duration_seconds,
+        llm_provider=step.llm_provider,
+        llm_model=step.llm_model,
+        llm_used=step.llm_used,
+        llm_fallback_reason=step.llm_fallback_reason,
+    )
+
+
+def _llm_call_event_to_response(event: LLMCallEvent) -> LLMCallEventResponse:
+    return LLMCallEventResponse(
+        id=event.id,
+        research_run_id=event.research_run_id,
+        node_name=event.node_name,
+        task=event.task,
+        status=event.status,
+        llm_provider=event.llm_provider,
+        llm_model=event.llm_model,
+        prompt_version=event.prompt_version,
+        started_at=_nullable_as_utc(event.started_at),
+        completed_at=_nullable_as_utc(event.completed_at),
+        duration_seconds=event.duration_seconds,
+        input_tokens=event.input_tokens,
+        output_tokens=event.output_tokens,
+        total_tokens=event.total_tokens,
+        provider_request_id=event.provider_request_id,
+        error_type=event.error_type,
+        error_message=event.error_message,
+        fallback_used=event.fallback_used,
+        fallback_reason=event.fallback_reason,
+    )
+
+
+def _llm_usage_summary_to_response(
+    run: ResearchRun,
+    events: list[LLMCallEvent],
+) -> LLMUsageSummaryResponse:
+    return LLMUsageSummaryResponse(
+        run_id=UUID(run.id),
+        status=run.status,
+        **summarize_llm_usage(events),
     )
 
 

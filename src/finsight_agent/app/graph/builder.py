@@ -16,6 +16,10 @@ from finsight_agent.app.services.filing_parser import (
     find_latest_filing,
     normalize_accession_number,
 )
+from finsight_agent.app.services.llm_client import (
+    REPORT_DRAFT_PROMPT_VERSION,
+    RISK_ANALYSIS_PROMPT_VERSION,
+)
 from finsight_agent.app.services.metrics import extract_financial_metrics
 from finsight_agent.app.services.research_synthesizer import synthesize_research_insights
 from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
@@ -147,6 +151,7 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "compliance_status": state.get("compliance_status"),
         "report_quality_status": state.get("report_quality_status"),
         "agent_steps": state.get("agent_steps", []),
+        "llm_call_events": state.get("llm_call_events", []),
         "sources": state.get("sources", []),
         "warnings": state.get("warnings", []),
         "errors": state.get("errors", []),
@@ -579,19 +584,67 @@ def _make_analyze_risks_node(llm_client: Any | None):
         risk_factors = state.get("risk_factors", [])
         warnings = state.get("warnings", [])
         used_llm = False
+        llm_step_metadata = _llm_step_metadata(
+            llm_client,
+            used=False,
+            fallback_reason="No LLM client configured.",
+        )
+        llm_call_event = _skipped_llm_call_event(
+            llm_client,
+            node_name="analyze_risks",
+            task="risk_analysis",
+            prompt_version=RISK_ANALYSIS_PROMPT_VERSION,
+            fallback_reason="No LLM client configured.",
+        )
         if llm_client is not None:
+            started_at = datetime.now(timezone.utc)
             try:
                 analysis = _validate_risk_analysis(llm_client.summarize_risks(risk_factors))
+                completed_at = datetime.now(timezone.utc)
                 used_llm = True
+                llm_step_metadata = _llm_step_metadata(llm_client, used=True)
+                llm_call_event = _llm_call_event(
+                    llm_client,
+                    node_name="analyze_risks",
+                    task="risk_analysis",
+                    status="completed",
+                    prompt_version=RISK_ANALYSIS_PROMPT_VERSION,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    fallback_used=False,
+                )
             except Exception as exc:
+                completed_at = datetime.now(timezone.utc)
+                fallback_reason = str(exc)
                 warnings = [
                     *warnings,
                     {
                         "code": "llm_risk_analysis_unavailable",
-                        "message": str(exc),
+                        "message": fallback_reason,
                         "severity": "warning",
+                        "details": _llm_warning_details(
+                            llm_client,
+                            fallback="deterministic_risk_analysis",
+                        ),
                     },
                 ]
+                llm_step_metadata = _llm_step_metadata(
+                    llm_client,
+                    used=False,
+                    fallback_reason=fallback_reason,
+                )
+                llm_call_event = _llm_call_event(
+                    llm_client,
+                    node_name="analyze_risks",
+                    task="risk_analysis",
+                    status="failed",
+                    prompt_version=RISK_ANALYSIS_PROMPT_VERSION,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    fallback_used=True,
+                    fallback_reason=fallback_reason,
+                    error=exc,
+                )
                 analysis = analyze_risk_factors(risk_factors)
         else:
             analysis = analyze_risk_factors(risk_factors)
@@ -611,7 +664,9 @@ def _make_analyze_risks_node(llm_client: Any | None):
                 "analyze_risks",
                 "completed",
                 message,
+                **llm_step_metadata,
             ),
+            "llm_call_events": _append_llm_call_event(state, llm_call_event),
         }
 
     return analyze_risks
@@ -671,6 +726,7 @@ def _synthesize_research(state: FinSightState) -> FinSightState:
 def _make_draft_report_node(llm_client: Any | None):
     def draft_report(state: FinSightState) -> FinSightState:
         if llm_client is None or not hasattr(llm_client, "draft_report"):
+            fallback_reason = "No report-drafting LLM client configured."
             return {
                 "llm_report_sections": None,
                 "agent_steps": _append_step(
@@ -678,23 +734,46 @@ def _make_draft_report_node(llm_client: Any | None):
                     "draft_report",
                     "completed",
                     "Using deterministic report generator.",
+                    **_llm_step_metadata(
+                        llm_client,
+                        used=False,
+                        fallback_reason=fallback_reason,
+                    ),
+                ),
+                "llm_call_events": _append_llm_call_event(
+                    state,
+                    _skipped_llm_call_event(
+                        llm_client,
+                        node_name="draft_report",
+                        task="report_drafting",
+                        prompt_version=REPORT_DRAFT_PROMPT_VERSION,
+                        fallback_reason=fallback_reason,
+                    ),
                 ),
             }
 
+        started_at = datetime.now(timezone.utc)
         try:
             draft = _validate_report_draft(
                 llm_client.draft_report(_report_evidence(state)),
                 known_source_ids=_known_source_ids(state),
             )
+            completed_at = datetime.now(timezone.utc)
         except Exception as exc:
+            completed_at = datetime.now(timezone.utc)
+            fallback_reason = str(exc)
             return {
                 "llm_report_sections": None,
                 "warnings": [
                     *state.get("warnings", []),
                     {
                         "code": "llm_report_drafting_unavailable",
-                        "message": str(exc),
+                        "message": fallback_reason,
                         "severity": "warning",
+                        "details": _llm_warning_details(
+                            llm_client,
+                            fallback="deterministic_report_generator",
+                        ),
                     },
                 ],
                 "agent_steps": _append_step(
@@ -702,6 +781,26 @@ def _make_draft_report_node(llm_client: Any | None):
                     "draft_report",
                     "completed",
                     "Using deterministic report generator after LLM report drafting failed.",
+                    **_llm_step_metadata(
+                        llm_client,
+                        used=False,
+                        fallback_reason=fallback_reason,
+                    ),
+                ),
+                "llm_call_events": _append_llm_call_event(
+                    state,
+                    _llm_call_event(
+                        llm_client,
+                        node_name="draft_report",
+                        task="report_drafting",
+                        status="failed",
+                        prompt_version=REPORT_DRAFT_PROMPT_VERSION,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        fallback_used=True,
+                        fallback_reason=fallback_reason,
+                        error=exc,
+                    ),
                 ),
             }
 
@@ -716,6 +815,20 @@ def _make_draft_report_node(llm_client: Any | None):
                 "draft_report",
                 "completed",
                 "Generated LLM-assisted report sections from structured evidence.",
+                **_llm_step_metadata(llm_client, used=True),
+            ),
+            "llm_call_events": _append_llm_call_event(
+                state,
+                _llm_call_event(
+                    llm_client,
+                    node_name="draft_report",
+                    task="report_drafting",
+                    status="completed",
+                    prompt_version=REPORT_DRAFT_PROMPT_VERSION,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    fallback_used=False,
+                ),
             ),
         }
 
@@ -995,19 +1108,175 @@ def _metrics_extraction_message(metrics: dict[str, Any]) -> str:
     )
 
 
+def _llm_step_metadata(
+    llm_client: Any | None,
+    *,
+    used: bool,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    provider, model = _llm_client_identity(llm_client)
+    return {
+        key: value
+        for key, value in {
+            "llm_provider": provider,
+            "llm_model": model,
+            "llm_used": used,
+            "llm_fallback_reason": fallback_reason,
+        }.items()
+        if value is not None
+    }
+
+
+def _llm_warning_details(llm_client: Any, *, fallback: str) -> dict[str, str]:
+    provider, model = _llm_client_identity(llm_client)
+    return {
+        key: value
+        for key, value in {
+            "llm_provider": provider,
+            "llm_model": model,
+            "fallback": fallback,
+        }.items()
+        if value is not None
+    }
+
+
+def _skipped_llm_call_event(
+    llm_client: Any | None,
+    *,
+    node_name: str,
+    task: str,
+    prompt_version: str,
+    fallback_reason: str,
+) -> dict[str, Any]:
+    provider, model = _llm_client_identity(llm_client)
+    return {
+        key: value
+        for key, value in {
+            "node_name": node_name,
+            "task": task,
+            "status": "skipped",
+            "llm_provider": provider,
+            "llm_model": model,
+            "prompt_version": prompt_version,
+            "fallback_used": True,
+            "fallback_reason": fallback_reason,
+        }.items()
+        if value is not None
+    }
+
+
+def _llm_call_event(
+    llm_client: Any,
+    *,
+    node_name: str,
+    task: str,
+    status: str,
+    prompt_version: str,
+    started_at: datetime,
+    completed_at: datetime,
+    fallback_used: bool,
+    fallback_reason: str | None = None,
+    error: Exception | None = None,
+) -> dict[str, Any]:
+    provider, model = _llm_client_identity(llm_client)
+    event = {
+        "node_name": node_name,
+        "task": task,
+        "status": status,
+        "llm_provider": provider,
+        "llm_model": model,
+        "prompt_version": prompt_version,
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "duration_seconds": max((completed_at - started_at).total_seconds(), 0.0),
+        **_llm_call_usage_metadata(llm_client),
+        "error_type": type(error).__name__ if error is not None else None,
+        "error_message": str(error) if error is not None else None,
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+    }
+    return {key: value for key, value in event.items() if value is not None}
+
+
+def _llm_call_usage_metadata(llm_client: Any) -> dict[str, Any]:
+    metadata = getattr(llm_client, "last_call_metadata", None)
+    if not isinstance(metadata, dict):
+        return {}
+
+    return {
+        key: value
+        for key, value in {
+            "input_tokens": _optional_non_negative_int(metadata.get("input_tokens")),
+            "output_tokens": _optional_non_negative_int(metadata.get("output_tokens")),
+            "total_tokens": _optional_non_negative_int(metadata.get("total_tokens")),
+            "provider_request_id": _optional_text(
+                metadata.get("provider_request_id") or metadata.get("request_id")
+            ),
+        }.items()
+        if value is not None
+    }
+
+
+def _llm_client_identity(llm_client: Any | None) -> tuple[str | None, str | None]:
+    if llm_client is None:
+        return None, None
+    return (
+        _optional_text(
+            getattr(llm_client, "provider", None)
+            or getattr(llm_client, "provider_name", None)
+        ),
+        _optional_text(
+            getattr(llm_client, "model_name", None)
+            or getattr(llm_client, "model", None)
+        ),
+    )
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
 def _append_step(
     state: FinSightState,
     node_name: str,
     status: str,
     message: str,
-) -> list[dict[str, str]]:
+    **metadata: Any,
+) -> list[dict[str, Any]]:
+    step = {
+        "node_name": node_name,
+        "status": status,
+        "message": message,
+        **{key: value for key, value in metadata.items() if value is not None},
+    }
     return [
         *state.get("agent_steps", []),
-        {
-            "node_name": node_name,
-            "status": status,
-            "message": message,
-        },
+        step,
+    ]
+
+
+def _append_llm_call_event(
+    state: FinSightState,
+    event: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        *state.get("llm_call_events", []),
+        event,
     ]
 
 

@@ -86,6 +86,10 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
                     "started_at": step_started_at,
                     "completed_at": step_completed_at,
                     "duration_seconds": 2.0,
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-test-model",
+                    "llm_used": True,
+                    "llm_fallback_reason": None,
                 },
                 {
                     "node_name": "fetch_sec_data",
@@ -93,11 +97,38 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
                     "message": "Fetched SEC submissions and company facts.",
                 },
             ],
+            "llm_call_events": [
+                {
+                    "node_name": "analyze_risks",
+                    "task": "risk_analysis",
+                    "status": "completed",
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-test-model",
+                    "prompt_version": "risk_analysis:v1",
+                    "started_at": step_started_at,
+                    "completed_at": step_completed_at,
+                    "duration_seconds": 2.0,
+                    "input_tokens": 120,
+                    "output_tokens": 42,
+                    "total_tokens": 162,
+                    "provider_request_id": "req_123",
+                    "fallback_used": False,
+                },
+                {
+                    "node_name": "draft_report",
+                    "task": "report_drafting",
+                    "status": "skipped",
+                    "prompt_version": "report_drafting:v1",
+                    "fallback_used": True,
+                    "fallback_reason": "No report-drafting LLM client configured.",
+                },
+            ],
             "final_report": None,
         },
     )
     retrieved = repository.get_by_id(run_id)
     steps = repository.get_steps_for_run(run_id)
+    llm_call_events = repository.get_llm_call_events_for_run(run_id)
 
     assert retrieved is not None
     assert retrieved.id == str(run_id)
@@ -139,9 +170,42 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert_datetime_round_trips(steps[0].started_at, step_started_at)
     assert_datetime_round_trips(steps[0].completed_at, step_completed_at)
     assert steps[0].duration_seconds == 2.0
+    assert steps[0].llm_provider == "openai"
+    assert steps[0].llm_model == "gpt-test-model"
+    assert steps[0].llm_used is True
+    assert steps[0].llm_fallback_reason is None
     assert steps[1].started_at is None
     assert steps[1].completed_at is None
     assert steps[1].duration_seconds is None
+    assert steps[1].llm_provider is None
+    assert steps[1].llm_model is None
+    assert steps[1].llm_used is None
+    assert steps[1].llm_fallback_reason is None
+    assert [event.node_name for event in llm_call_events] == [
+        "analyze_risks",
+        "draft_report",
+    ]
+    assert llm_call_events[0].task == "risk_analysis"
+    assert llm_call_events[0].status == "completed"
+    assert llm_call_events[0].llm_provider == "openai"
+    assert llm_call_events[0].llm_model == "gpt-test-model"
+    assert llm_call_events[0].prompt_version == "risk_analysis:v1"
+    assert_datetime_round_trips(llm_call_events[0].started_at, step_started_at)
+    assert_datetime_round_trips(llm_call_events[0].completed_at, step_completed_at)
+    assert llm_call_events[0].duration_seconds == 2.0
+    assert llm_call_events[0].input_tokens == 120
+    assert llm_call_events[0].output_tokens == 42
+    assert llm_call_events[0].total_tokens == 162
+    assert llm_call_events[0].provider_request_id == "req_123"
+    assert llm_call_events[0].fallback_used is False
+    assert llm_call_events[0].fallback_reason is None
+    assert llm_call_events[1].task == "report_drafting"
+    assert llm_call_events[1].status == "skipped"
+    assert llm_call_events[1].llm_provider is None
+    assert llm_call_events[1].fallback_used is True
+    assert llm_call_events[1].fallback_reason == (
+        "No report-drafting LLM client configured."
+    )
 
     session.close()
 
@@ -153,6 +217,7 @@ def test_repository_creates_pending_research_run(tmp_path) -> None:
     created = repository.create_pending_run(run_id=run_id, query="AAPL")
     retrieved = repository.get_by_id(run_id)
     steps = repository.get_steps_for_run(run_id)
+    llm_call_events = repository.get_llm_call_events_for_run(run_id)
 
     assert retrieved is not None
     assert retrieved.id == str(run_id)
@@ -176,6 +241,7 @@ def test_repository_creates_pending_research_run(tmp_path) -> None:
     assert retrieved.completed_at is None
     assert created.id == retrieved.id
     assert steps == []
+    assert llm_call_events == []
 
     session.close()
 

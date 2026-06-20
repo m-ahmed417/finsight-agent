@@ -75,6 +75,10 @@ def _ensure_sqlite_agent_step_columns() -> None:
         "started_at": "DATETIME",
         "completed_at": "DATETIME",
         "duration_seconds": "FLOAT",
+        "llm_provider": "VARCHAR(40)",
+        "llm_model": "VARCHAR(120)",
+        "llm_used": "BOOLEAN",
+        "llm_fallback_reason": "TEXT",
     }
     with engine.begin() as connection:
         for column_name, column_definition in column_definitions.items():

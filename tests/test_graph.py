@@ -111,7 +111,16 @@ class CacheMetadataSECClient(FakeSECClient):
 
 
 class FakeLLMClient:
+    provider = "fake"
+    model_name = "fake-model"
+
     def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        self.last_call_metadata = {
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+            "provider_request_id": "risk-req-123",
+        }
         return {
             "themes": [
                 {
@@ -128,6 +137,12 @@ class FakeLLMClient:
         }
 
     def draft_report(self, evidence: dict) -> dict:
+        self.last_call_metadata = {
+            "input_tokens": 300,
+            "output_tokens": 150,
+            "total_tokens": 450,
+            "provider_request_id": "draft-req-456",
+        }
         return {
             "sections": {
                 "executive_summary": ["LLM-written graph summary."],
@@ -144,20 +159,34 @@ class FakeLLMClient:
 
 
 class FailingLLMClient:
+    provider = "fake"
+    model_name = "fake-model"
+
     def summarize_risks(self, risk_factors: list[dict]) -> dict:
+        self.last_call_metadata = {"provider_request_id": "risk-fail-req"}
         raise RuntimeError("LLM unavailable")
 
     def draft_report(self, evidence: dict) -> dict:
+        self.last_call_metadata = {"provider_request_id": "draft-fail-req"}
         raise RuntimeError("LLM report drafting unavailable")
 
 
 class EmptyThemesLLMClient:
+    provider = "fake"
+    model_name = "fake-model"
+
     def summarize_risks(self, risk_factors: list[dict]) -> dict:
         return {"themes": [], "warnings": []}
 
 
 class InvalidReportDraftLLMClient(FakeLLMClient):
     def draft_report(self, evidence: dict) -> dict:
+        self.last_call_metadata = {
+            "input_tokens": 300,
+            "output_tokens": 150,
+            "total_tokens": 450,
+            "provider_request_id": "draft-req-456",
+        }
         return {"sections": {"executive_summary": []}, "warnings": []}
 
 
@@ -263,6 +292,16 @@ def assert_step_has_timing(step: dict) -> None:
     assert step["duration_seconds"] >= 0.0
     computed_duration = (completed_at - started_at).total_seconds()
     assert abs(computed_duration - step["duration_seconds"]) < 0.001
+
+
+def assert_llm_call_has_timing(event: dict) -> None:
+    started_at = datetime.fromisoformat(event["started_at"])
+    completed_at = datetime.fromisoformat(event["completed_at"])
+    assert started_at.tzinfo is not None
+    assert completed_at.tzinfo is not None
+    assert completed_at >= started_at
+    assert isinstance(event["duration_seconds"], int | float)
+    assert event["duration_seconds"] >= 0.0
 
 
 def test_extract_metrics_does_not_mutate_existing_state_warnings() -> None:
@@ -581,6 +620,32 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "Extracted financial metrics from SEC company facts; "
         "fiscal years: 2023, 2024; XBRL tags used: 9."
     )
+    assert step_by_name["analyze_risks"]["llm_used"] is False
+    assert step_by_name["analyze_risks"]["llm_fallback_reason"] == (
+        "No LLM client configured."
+    )
+    assert step_by_name["draft_report"]["llm_used"] is False
+    assert step_by_name["draft_report"]["llm_fallback_reason"] == (
+        "No report-drafting LLM client configured."
+    )
+    assert result["llm_call_events"] == [
+        {
+            "node_name": "analyze_risks",
+            "task": "risk_analysis",
+            "status": "skipped",
+            "prompt_version": "risk_analysis:v1",
+            "fallback_used": True,
+            "fallback_reason": "No LLM client configured.",
+        },
+        {
+            "node_name": "draft_report",
+            "task": "report_drafting",
+            "status": "skipped",
+            "prompt_version": "report_drafting:v1",
+            "fallback_used": True,
+            "fallback_reason": "No report-drafting LLM client configured.",
+        },
+    ]
     assert [step["node_name"] for step in result["agent_steps"]] == [
         "resolve_company",
         "fetch_sec_data",
@@ -812,22 +877,56 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
             "source_ids": ["latest_10k"],
         }
     ]
-    assert_agent_step(
+    risk_step = assert_agent_step(
         result,
         node_name="analyze_risks",
         status="completed",
         message="Generated LLM-assisted risk themes from extracted 10-K text.",
     )
+    assert risk_step["llm_provider"] == "fake"
+    assert risk_step["llm_model"] == "fake-model"
+    assert risk_step["llm_used"] is True
+    assert risk_step.get("llm_fallback_reason") is None
+    risk_call = result["llm_call_events"][0]
+    assert risk_call["node_name"] == "analyze_risks"
+    assert risk_call["task"] == "risk_analysis"
+    assert risk_call["status"] == "completed"
+    assert risk_call["llm_provider"] == "fake"
+    assert risk_call["llm_model"] == "fake-model"
+    assert risk_call["prompt_version"] == "risk_analysis:v1"
+    assert risk_call["input_tokens"] == 120
+    assert risk_call["output_tokens"] == 42
+    assert risk_call["total_tokens"] == 162
+    assert risk_call["provider_request_id"] == "risk-req-123"
+    assert risk_call["fallback_used"] is False
+    assert_llm_call_has_timing(risk_call)
     assert result["llm_report_sections"]["executive_summary"] == [
         "LLM-written graph summary."
     ]
     assert "LLM-written graph bull case." in result["final_report"]
-    assert_agent_step(
+    draft_step = assert_agent_step(
         result,
         node_name="draft_report",
         status="completed",
         message="Generated LLM-assisted report sections from structured evidence.",
     )
+    assert draft_step["llm_provider"] == "fake"
+    assert draft_step["llm_model"] == "fake-model"
+    assert draft_step["llm_used"] is True
+    assert draft_step.get("llm_fallback_reason") is None
+    draft_call = result["llm_call_events"][1]
+    assert draft_call["node_name"] == "draft_report"
+    assert draft_call["task"] == "report_drafting"
+    assert draft_call["status"] == "completed"
+    assert draft_call["llm_provider"] == "fake"
+    assert draft_call["llm_model"] == "fake-model"
+    assert draft_call["prompt_version"] == "report_drafting:v1"
+    assert draft_call["input_tokens"] == 300
+    assert draft_call["output_tokens"] == 150
+    assert draft_call["total_tokens"] == 450
+    assert draft_call["provider_request_id"] == "draft-req-456"
+    assert draft_call["fallback_used"] is False
+    assert_llm_call_has_timing(draft_call)
 
 
 def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails() -> None:
@@ -853,13 +952,35 @@ def test_research_graph_falls_back_to_deterministic_risk_analysis_when_llm_fails
         "code": "llm_risk_analysis_unavailable",
         "message": "LLM unavailable",
         "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_risk_analysis",
+        },
     } in result["warnings"]
-    assert_agent_step(
+    risk_step = assert_agent_step(
         result,
         node_name="analyze_risks",
         status="completed",
         message="Generated deterministic risk themes from extracted 10-K text.",
     )
+    assert risk_step["llm_provider"] == "fake"
+    assert risk_step["llm_model"] == "fake-model"
+    assert risk_step["llm_used"] is False
+    assert risk_step["llm_fallback_reason"] == "LLM unavailable"
+    risk_call = result["llm_call_events"][0]
+    assert risk_call["node_name"] == "analyze_risks"
+    assert risk_call["task"] == "risk_analysis"
+    assert risk_call["status"] == "failed"
+    assert risk_call["llm_provider"] == "fake"
+    assert risk_call["llm_model"] == "fake-model"
+    assert risk_call["prompt_version"] == "risk_analysis:v1"
+    assert risk_call["provider_request_id"] == "risk-fail-req"
+    assert risk_call["error_type"] == "RuntimeError"
+    assert risk_call["error_message"] == "LLM unavailable"
+    assert risk_call["fallback_used"] is True
+    assert risk_call["fallback_reason"] == "LLM unavailable"
+    assert_llm_call_has_timing(risk_call)
 
 
 def test_research_graph_falls_back_when_llm_returns_empty_themes() -> None:
@@ -885,6 +1006,11 @@ def test_research_graph_falls_back_when_llm_returns_empty_themes() -> None:
         "code": "llm_risk_analysis_unavailable",
         "message": "LLM risk analysis must include at least one theme.",
         "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_risk_analysis",
+        },
     } in result["warnings"]
 
 
@@ -913,13 +1039,44 @@ def test_research_graph_falls_back_when_llm_report_draft_is_invalid() -> None:
         "code": "llm_report_drafting_unavailable",
         "message": "LLM report draft must include valid report sections.",
         "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
     } in result["warnings"]
-    assert_agent_step(
+    draft_step = assert_agent_step(
         result,
         node_name="draft_report",
         status="completed",
         message="Using deterministic report generator after LLM report drafting failed.",
     )
+    assert draft_step["llm_provider"] == "fake"
+    assert draft_step["llm_model"] == "fake-model"
+    assert draft_step["llm_used"] is False
+    assert draft_step["llm_fallback_reason"] == (
+        "LLM report draft must include valid report sections."
+    )
+    draft_call = result["llm_call_events"][1]
+    assert draft_call["node_name"] == "draft_report"
+    assert draft_call["task"] == "report_drafting"
+    assert draft_call["status"] == "failed"
+    assert draft_call["llm_provider"] == "fake"
+    assert draft_call["llm_model"] == "fake-model"
+    assert draft_call["prompt_version"] == "report_drafting:v1"
+    assert draft_call["input_tokens"] == 300
+    assert draft_call["output_tokens"] == 150
+    assert draft_call["total_tokens"] == 450
+    assert draft_call["provider_request_id"] == "draft-req-456"
+    assert draft_call["error_type"] == "ValueError"
+    assert draft_call["error_message"] == (
+        "LLM report draft must include valid report sections."
+    )
+    assert draft_call["fallback_used"] is True
+    assert draft_call["fallback_reason"] == (
+        "LLM report draft must include valid report sections."
+    )
+    assert_llm_call_has_timing(draft_call)
 
 
 def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> None:
@@ -951,12 +1108,24 @@ def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> No
             "source-grounded sections."
         ),
         "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
     } in result["warnings"]
-    assert_agent_step(
+    draft_step = assert_agent_step(
         result,
         node_name="draft_report",
         status="completed",
         message="Using deterministic report generator after LLM report drafting failed.",
+    )
+    assert draft_step["llm_provider"] == "fake"
+    assert draft_step["llm_model"] == "fake-model"
+    assert draft_step["llm_used"] is False
+    assert draft_step["llm_fallback_reason"] == (
+        "LLM report draft must include known source_id citations in "
+        "source-grounded sections."
     )
 
 

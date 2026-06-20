@@ -184,9 +184,41 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/steps"
 
 `GET /research/{run_id}/steps` returns the stored `agent_steps` as records with
 `node_name`, `status`, `message`, `error_message`, `started_at`, `completed_at`,
-and `duration_seconds` fields. Workflow-generated steps populate UTC timing
-metadata; timing fields remain nullable so older or partial workflow steps can
-still be returned without inventing execution timings.
+`duration_seconds`, `llm_provider`, `llm_model`, `llm_used`, and
+`llm_fallback_reason` fields. Workflow-generated steps populate UTC timing
+metadata and record whether LLM output or deterministic fallback was used for
+LLM-aware steps. Timing and LLM fields remain nullable so older or partial
+workflow steps can still be returned without inventing execution details.
+
+Fetch model-call audit events:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/llm-calls"
+```
+
+`GET /research/{run_id}/llm-calls` returns the stored `llm_call_events` for
+LLM-aware workflow nodes. Each record includes `node_name`, `task`, `status`,
+`llm_provider`, `llm_model`, `prompt_version`, `started_at`, `completed_at`,
+`duration_seconds`, `input_tokens`, `output_tokens`, `total_tokens`,
+`provider_request_id`, `error_type`, `error_message`, `fallback_used`, and
+`fallback_reason`. Successful provider calls are recorded with
+`status=completed`; failed provider calls are recorded with `status=failed` and
+the deterministic fallback reason; disabled model calls are recorded with
+`status=skipped`.
+
+Fetch a compact LLM usage summary:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/research/{run_id}/llm-usage"
+```
+
+`GET /research/{run_id}/llm-usage` rolls up the stored model-call audit events
+without returning the full event list. It reports `total_calls`,
+`completed_calls`, `failed_calls`, `skipped_calls`, `fallback_count`,
+`total_duration_seconds`, `total_input_tokens`, `total_output_tokens`,
+`total_tokens`, `providers`, and `models`. Token totals are provider-reported
+when available; FinSight does not estimate dollar cost here because model
+pricing changes outside the codebase.
 
 ## Configuration
 

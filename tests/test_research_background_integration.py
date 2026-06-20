@@ -51,12 +51,34 @@ def test_post_research_background_task_persists_completed_run_for_polling(
                     "started_at": "2026-06-16T13:00:00+00:00",
                     "completed_at": "2026-06-16T13:00:02+00:00",
                     "duration_seconds": 2.0,
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-test-model",
+                    "llm_used": True,
+                    "llm_fallback_reason": None,
                 },
                 {
                     "node_name": "fetch_sec_data",
                     "status": "completed",
                     "message": "Fetched SEC submissions and company facts.",
                 },
+            ],
+            "llm_call_events": [
+                {
+                    "node_name": "analyze_risks",
+                    "task": "risk_analysis",
+                    "status": "completed",
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-test-model",
+                    "prompt_version": "risk_analysis:v1",
+                    "started_at": "2026-06-16T13:00:00+00:00",
+                    "completed_at": "2026-06-16T13:00:01+00:00",
+                    "duration_seconds": 1.0,
+                    "input_tokens": 120,
+                    "output_tokens": 42,
+                    "total_tokens": 162,
+                    "provider_request_id": "req_123",
+                    "fallback_used": False,
+                }
             ],
         }
     )
@@ -72,6 +94,8 @@ def test_post_research_background_task_persists_completed_run_for_polling(
         get_response = client.get(f"/research/{run_id}")
         progress_response = client.get(f"/research/{run_id}/progress")
         steps_response = client.get(f"/research/{run_id}/steps")
+        llm_calls_response = client.get(f"/research/{run_id}/llm-calls")
+        llm_usage_response = client.get(f"/research/{run_id}/llm-usage")
 
     assert post_response.status_code == 202
     assert post_response.json()["status"] == "queued"
@@ -116,6 +140,10 @@ def test_post_research_background_task_persists_completed_run_for_polling(
             "started_at": None,
             "completed_at": None,
             "duration_seconds": None,
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_used": None,
+            "llm_fallback_reason": None,
         },
     }
 
@@ -131,6 +159,10 @@ def test_post_research_background_task_persists_completed_run_for_polling(
             "started_at": "2026-06-16T13:00:00Z",
             "completed_at": "2026-06-16T13:00:02Z",
             "duration_seconds": 2.0,
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "llm_used": True,
+            "llm_fallback_reason": None,
         },
         {
             "id": 2,
@@ -142,8 +174,52 @@ def test_post_research_background_task_persists_completed_run_for_polling(
             "started_at": None,
             "completed_at": None,
             "duration_seconds": None,
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_used": None,
+            "llm_fallback_reason": None,
         },
     ]
+    assert llm_calls_response.status_code == 200
+    assert llm_calls_response.json() == [
+        {
+            "id": 1,
+            "research_run_id": run_id,
+            "node_name": "analyze_risks",
+            "task": "risk_analysis",
+            "status": "completed",
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "prompt_version": "risk_analysis:v1",
+            "started_at": "2026-06-16T13:00:00Z",
+            "completed_at": "2026-06-16T13:00:01Z",
+            "duration_seconds": 1.0,
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+            "provider_request_id": "req_123",
+            "error_type": None,
+            "error_message": None,
+            "fallback_used": False,
+            "fallback_reason": None,
+        }
+    ]
+    assert llm_usage_response.status_code == 200
+    assert llm_usage_response.json() == {
+        "run_id": run_id,
+        "status": "completed",
+        "total_calls": 1,
+        "completed_calls": 1,
+        "failed_calls": 0,
+        "skipped_calls": 0,
+        "fallback_count": 0,
+        "total_duration_seconds": 1.0,
+        "total_input_tokens": 120,
+        "total_output_tokens": 42,
+        "total_tokens": 162,
+        "providers": ["openai"],
+        "models": ["gpt-test-model"],
+    }
 
 
 def test_post_research_background_task_persists_failed_run_for_polling(
@@ -218,6 +294,10 @@ def test_post_research_background_task_persists_failed_run_for_polling(
             "started_at": None,
             "completed_at": None,
             "duration_seconds": None,
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_used": None,
+            "llm_fallback_reason": None,
         }
     ]
 

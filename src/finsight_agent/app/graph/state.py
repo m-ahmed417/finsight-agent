@@ -27,6 +27,7 @@ class FinSightState(TypedDict, total=False):
     report_quality_status: str | None
 
     agent_steps: list[dict[str, Any]]
+    llm_call_events: list[dict[str, Any]]
     sources: list[dict[str, Any]]
     warnings: list[dict[str, Any]]
     errors: list[dict[str, Any]]

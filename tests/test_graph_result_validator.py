@@ -46,6 +46,24 @@ def test_validate_graph_result_normalizes_contract_fields_without_mutating_input
                 "duration_ms": 125,
             }
         ],
+        "llm_call_events": [
+            {
+                "node_name": " analyze_risks ",
+                "task": " risk_analysis ",
+                "status": " completed ",
+                "llm_provider": "openai",
+                "llm_model": "gpt-test-model",
+                "prompt_version": "risk_analysis:v1",
+                "started_at": "2026-06-16T13:00:00+00:00",
+                "completed_at": "2026-06-16T13:00:01+00:00",
+                "duration_seconds": 1.0,
+                "input_tokens": 120,
+                "output_tokens": 42,
+                "total_tokens": 162,
+                "provider_request_id": "req_123",
+                "fallback_used": False,
+            }
+        ],
     }
 
     normalized = validate_graph_result(graph_result)
@@ -90,6 +108,24 @@ def test_validate_graph_result_normalizes_contract_fields_without_mutating_input
             "duration_ms": 125,
         }
     ]
+    assert normalized["llm_call_events"] == [
+        {
+            "node_name": "analyze_risks",
+            "task": "risk_analysis",
+            "status": "completed",
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "prompt_version": "risk_analysis:v1",
+            "started_at": datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc),
+            "completed_at": datetime(2026, 6, 16, 13, 0, 1, tzinfo=timezone.utc),
+            "duration_seconds": 1.0,
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+            "provider_request_id": "req_123",
+            "fallback_used": False,
+        }
+    ]
 
 
 def test_validate_graph_result_defaults_missing_contract_lists() -> None:
@@ -99,6 +135,7 @@ def test_validate_graph_result_defaults_missing_contract_lists() -> None:
     assert normalized["errors"] == []
     assert normalized["sources"] == []
     assert normalized["agent_steps"] == []
+    assert normalized["llm_call_events"] == []
 
 
 def test_validate_graph_result_rejects_non_mapping_result() -> None:
@@ -113,6 +150,7 @@ def test_validate_graph_result_rejects_non_mapping_result() -> None:
         ("errors", {}),
         ("sources", {}),
         ("agent_steps", {}),
+        ("llm_call_events", {}),
     ],
 )
 def test_validate_graph_result_rejects_non_list_contract_fields(
@@ -148,6 +186,11 @@ def test_validate_graph_result_rejects_non_list_contract_fields(
             "agent_steps",
             [{"node_name": "resolve_company", "status": " "}],
             "Invalid graph result field 'agent_steps' item 0: status:",
+        ),
+        (
+            "llm_call_events",
+            [{"node_name": "analyze_risks", "task": "risk_analysis", "status": " "}],
+            "Invalid graph result field 'llm_call_events' item 0: status:",
         ),
     ],
 )

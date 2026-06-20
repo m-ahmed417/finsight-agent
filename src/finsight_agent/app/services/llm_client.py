@@ -8,6 +8,8 @@ from finsight_agent.app.config import Settings, get_settings
 from finsight_agent.app.services.risk_analyzer import analyze_risk_factors
 
 MAX_RISK_FACTOR_TEXT_CHARS = 12000
+RISK_ANALYSIS_PROMPT_VERSION = "risk_analysis:v1"
+REPORT_DRAFT_PROMPT_VERSION = "report_drafting:v1"
 
 
 class LLMClient(Protocol):
@@ -76,6 +78,12 @@ class ReportDraftLLMResponse(BaseModel):
 
 
 class MockLLMClient:
+    provider = "mock"
+    model_name = "mock"
+
+    def __init__(self) -> None:
+        self.last_call_metadata: dict[str, Any] = {}
+
     def summarize_risks(self, risk_factors: list[dict[str, Any]]) -> dict[str, Any]:
         return analyze_risk_factors(risk_factors)
 
@@ -125,9 +133,16 @@ class MockLLMClient:
 
 
 class ChatModelLLMClient:
-    def __init__(self, chat_model: Any, model_name: str) -> None:
+    def __init__(
+        self,
+        chat_model: Any,
+        model_name: str,
+        provider: str = "unknown",
+    ) -> None:
         self._chat_model = chat_model
-        self._model_name = model_name
+        self.provider = provider
+        self.model_name = model_name
+        self.last_call_metadata: dict[str, Any] = {}
 
     def summarize_risks(self, risk_factors: list[dict[str, Any]]) -> dict[str, Any]:
         prepared_risk_factors, truncation_warnings = _prepare_risk_factors_for_llm(
@@ -149,6 +164,7 @@ class ChatModelLLMClient:
                     "content": json.dumps(
                         {
                             "task": "Summarize extracted SEC risk-factor text.",
+                            "prompt_version": RISK_ANALYSIS_PROMPT_VERSION,
                             "required_schema": {
                                 "themes": [
                                     {
@@ -165,6 +181,7 @@ class ChatModelLLMClient:
                 },
             ]
         )
+        self.last_call_metadata = _model_response_metadata(response)
         data = _parse_llm_json_response(response)
         result = _normalize_risk_theme_response(data, risk_factors)
         return {
@@ -191,6 +208,7 @@ class ChatModelLLMClient:
                     "content": json.dumps(
                         {
                             "task": "Draft source-grounded research brief sections.",
+                            "prompt_version": REPORT_DRAFT_PROMPT_VERSION,
                             "required_schema": {
                                 "executive_summary": ["string"],
                                 "financial_performance": "string",
@@ -207,6 +225,7 @@ class ChatModelLLMClient:
                 },
             ]
         )
+        self.last_call_metadata = _model_response_metadata(response)
         data = _parse_llm_json_response(response)
         return _normalize_report_draft_response(data)
 
@@ -226,6 +245,7 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
         return ChatModelLLMClient(
             chat_model=chat_model,
             model_name=configured_settings.llm_model,
+            provider=provider,
         )
 
     msg = f"Unsupported LLM provider: {configured_settings.llm_provider}"
@@ -264,6 +284,64 @@ def _parse_llm_json_response(response: Any) -> dict[str, Any]:
         raise LLMClientError(msg)
 
     return data
+
+
+def _model_response_metadata(response: Any) -> dict[str, Any]:
+    usage_metadata = getattr(response, "usage_metadata", None)
+    response_metadata = getattr(response, "response_metadata", None) or {}
+    if not isinstance(response_metadata, dict):
+        response_metadata = {}
+    if not isinstance(usage_metadata, dict):
+        usage_metadata = _token_usage_metadata(response_metadata)
+
+    metadata = {
+        "input_tokens": _optional_non_negative_int(
+            usage_metadata.get("input_tokens")
+            or usage_metadata.get("prompt_tokens")
+            or usage_metadata.get("input_token_count")
+        ),
+        "output_tokens": _optional_non_negative_int(
+            usage_metadata.get("output_tokens")
+            or usage_metadata.get("completion_tokens")
+            or usage_metadata.get("output_token_count")
+        ),
+        "total_tokens": _optional_non_negative_int(
+            usage_metadata.get("total_tokens")
+            or usage_metadata.get("total_token_count")
+        ),
+        "provider_request_id": _optional_text(
+            response_metadata.get("id")
+            or response_metadata.get("request_id")
+            or getattr(response, "id", None)
+        ),
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _token_usage_metadata(response_metadata: dict[str, Any]) -> dict[str, Any]:
+    token_usage = response_metadata.get("token_usage")
+    if isinstance(token_usage, dict):
+        return token_usage
+    return {}
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _strip_json_code_fence(content: str) -> str:

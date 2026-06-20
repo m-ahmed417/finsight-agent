@@ -5,6 +5,9 @@ from pydantic import ValidationError
 
 from finsight_agent.app.api.schemas import (
     AgentStep,
+    LLMCallEvent,
+    LLMUsageSummary,
+    LLMUsageSummaryResponse,
     ResearchError,
     ResearchProgressResponse,
     ResearchResponse,
@@ -101,6 +104,10 @@ def test_agent_step_validates_required_fields_and_preserves_extra_metadata() -> 
             "started_at": "2026-06-16T13:00:00+00:00",
             "completed_at": "2026-06-16T13:00:02+00:00",
             "duration_seconds": 2.0,
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "llm_used": True,
+            "llm_fallback_reason": None,
             "duration_ms": 125,
         }
     )
@@ -110,6 +117,10 @@ def test_agent_step_validates_required_fields_and_preserves_extra_metadata() -> 
     assert step.started_at == datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
     assert step.completed_at == datetime(2026, 6, 16, 13, 0, 2, tzinfo=timezone.utc)
     assert step.duration_seconds == 2.0
+    assert step.llm_provider == "openai"
+    assert step.llm_model == "gpt-test-model"
+    assert step.llm_used is True
+    assert step.llm_fallback_reason is None
     assert step.model_dump()["duration_ms"] == 125
 
 
@@ -125,6 +136,123 @@ def test_agent_step_rejects_negative_duration() -> None:
                 "node_name": "resolve_company",
                 "status": "completed",
                 "duration_seconds": -0.01,
+            }
+        )
+
+
+def test_llm_call_event_validates_and_preserves_usage_metadata() -> None:
+    event = LLMCallEvent.model_validate(
+        {
+            "node_name": "analyze_risks",
+            "task": "risk_analysis",
+            "status": "completed",
+            "llm_provider": "openai",
+            "llm_model": "gpt-test-model",
+            "prompt_version": "risk_analysis:v1",
+            "started_at": "2026-06-16T13:00:00+00:00",
+            "completed_at": "2026-06-16T13:00:01+00:00",
+            "duration_seconds": 1.0,
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+            "provider_request_id": "req_123",
+            "fallback_used": False,
+            "trace_id": "custom-trace-id",
+        }
+    )
+
+    assert event.node_name == "analyze_risks"
+    assert event.task == "risk_analysis"
+    assert event.status == "completed"
+    assert event.llm_provider == "openai"
+    assert event.llm_model == "gpt-test-model"
+    assert event.prompt_version == "risk_analysis:v1"
+    assert event.input_tokens == 120
+    assert event.output_tokens == 42
+    assert event.total_tokens == 162
+    assert event.provider_request_id == "req_123"
+    assert event.fallback_used is False
+    assert event.model_dump()["trace_id"] == "custom-trace-id"
+
+
+def test_llm_call_event_rejects_negative_usage_values() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        LLMCallEvent.model_validate(
+            {
+                "node_name": "analyze_risks",
+                "task": "risk_analysis",
+                "status": "completed",
+                "input_tokens": -1,
+            }
+        )
+
+
+def test_llm_usage_summary_validates_rollup_fields() -> None:
+    summary = LLMUsageSummary.model_validate(
+        {
+            "total_calls": 3,
+            "completed_calls": 1,
+            "failed_calls": 1,
+            "skipped_calls": 1,
+            "fallback_count": 2,
+            "total_duration_seconds": 2.5,
+            "total_input_tokens": 120,
+            "total_output_tokens": 42,
+            "total_tokens": 162,
+            "providers": ["openai"],
+            "models": ["gpt-test-model"],
+        }
+    )
+
+    assert summary.total_calls == 3
+    assert summary.completed_calls == 1
+    assert summary.failed_calls == 1
+    assert summary.skipped_calls == 1
+    assert summary.fallback_count == 2
+    assert summary.total_duration_seconds == 2.5
+    assert summary.total_input_tokens == 120
+    assert summary.total_output_tokens == 42
+    assert summary.total_tokens == 162
+    assert summary.providers == ["openai"]
+    assert summary.models == ["gpt-test-model"]
+
+
+def test_llm_usage_summary_response_adds_run_context() -> None:
+    response = LLMUsageSummaryResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "status": "completed",
+            "total_calls": 0,
+            "completed_calls": 0,
+            "failed_calls": 0,
+            "skipped_calls": 0,
+            "fallback_count": 0,
+            "total_duration_seconds": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "providers": [],
+            "models": [],
+        }
+    )
+
+    assert str(response.run_id) == "00000000-0000-0000-0000-000000000001"
+    assert response.status == "completed"
+
+
+def test_llm_usage_summary_rejects_negative_counts() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        LLMUsageSummary.model_validate(
+            {
+                "total_calls": -1,
+                "completed_calls": 0,
+                "failed_calls": 0,
+                "skipped_calls": 0,
+                "fallback_count": 0,
+                "total_duration_seconds": 0.0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_tokens": 0,
             }
         )
 

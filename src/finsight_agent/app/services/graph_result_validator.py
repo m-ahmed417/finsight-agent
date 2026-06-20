@@ -5,6 +5,7 @@ from pydantic import BaseModel, ValidationError
 
 from finsight_agent.app.api.schemas import (
     AgentStep,
+    LLMCallEvent,
     ResearchError,
     ResearchWarning,
     SourceMetadata,
@@ -44,6 +45,11 @@ def validate_graph_result(graph_result: Mapping[str, Any]) -> dict[str, Any]:
         graph_result,
         field_name="agent_steps",
         model=AgentStep,
+    )
+    normalized["llm_call_events"] = _validate_list_field(
+        graph_result,
+        field_name="llm_call_events",
+        model=LLMCallEvent,
     )
     return normalized
 

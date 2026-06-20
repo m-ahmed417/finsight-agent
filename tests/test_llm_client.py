@@ -33,6 +33,8 @@ def test_mock_llm_client_returns_deterministic_structured_risk_themes() -> None:
 
     result = client.summarize_risks(sample_risk_factors())
 
+    assert client.provider == "mock"
+    assert client.model_name == "mock"
     assert result["warnings"] == []
     assert [theme["title"] for theme in result["themes"]] == [
         "Competitive pressure",
@@ -120,18 +122,43 @@ def test_get_llm_client_returns_mock_provider_by_default() -> None:
 
 
 class FakeMessage:
-    def __init__(self, content: str) -> None:
+    def __init__(
+        self,
+        content: str,
+        *,
+        usage_metadata: dict | None = None,
+        response_metadata: dict | None = None,
+        message_id: str | None = None,
+    ) -> None:
         self.content = content
+        self.usage_metadata = usage_metadata
+        self.response_metadata = response_metadata or {}
+        self.id = message_id
 
 
 class FakeChatModel:
-    def __init__(self, content: str) -> None:
+    def __init__(
+        self,
+        content: str,
+        *,
+        usage_metadata: dict | None = None,
+        response_metadata: dict | None = None,
+        message_id: str | None = None,
+    ) -> None:
         self.content = content
+        self.usage_metadata = usage_metadata
+        self.response_metadata = response_metadata
+        self.message_id = message_id
         self.messages = None
 
     def invoke(self, messages: list[dict[str, str]]) -> FakeMessage:
         self.messages = messages
-        return FakeMessage(self.content)
+        return FakeMessage(
+            self.content,
+            usage_metadata=self.usage_metadata,
+            response_metadata=self.response_metadata,
+            message_id=self.message_id,
+        )
 
 
 def test_chat_model_llm_client_parses_structured_risk_themes() -> None:
@@ -168,6 +195,40 @@ def test_chat_model_llm_client_parses_structured_risk_themes() -> None:
     assert chat_model.messages is not None
     assert chat_model.messages[0]["role"] == "system"
     assert "neutral equity research" in chat_model.messages[0]["content"]
+
+
+def test_chat_model_llm_client_captures_last_call_metadata() -> None:
+    chat_model = FakeChatModel(
+        """
+        {
+          "themes": [
+            {
+              "title": "Customer concentration",
+              "summary": "The filing describes dependence on major customers."
+            }
+          ]
+        }
+        """,
+        usage_metadata={
+            "input_tokens": 120,
+            "output_tokens": 42,
+            "total_tokens": 162,
+        },
+        response_metadata={"id": "provider-response-id"},
+        message_id="message-id",
+    )
+    client = ChatModelLLMClient(chat_model=chat_model, model_name="fake-model")
+
+    client.summarize_risks(sample_risk_factors())
+    user_payload = json.loads(chat_model.messages[1]["content"])
+
+    assert user_payload["prompt_version"] == "risk_analysis:v1"
+    assert client.last_call_metadata == {
+        "input_tokens": 120,
+        "output_tokens": 42,
+        "total_tokens": 162,
+        "provider_request_id": "provider-response-id",
+    }
 
 
 def test_chat_model_llm_client_truncates_large_risk_factor_text() -> None:
@@ -308,6 +369,8 @@ def test_get_llm_client_builds_openai_provider(monkeypatch) -> None:
     )
 
     assert isinstance(client, ChatModelLLMClient)
+    assert client.provider == "openai"
+    assert client.model_name == "gpt-test-model"
     assert calls == [
         {
             "model": "gpt-test-model",
@@ -340,6 +403,8 @@ def test_get_llm_client_builds_deepseek_provider(monkeypatch) -> None:
     )
 
     assert isinstance(client, ChatModelLLMClient)
+    assert client.provider == "deepseek"
+    assert client.model_name == "deepseek-test-model"
     assert calls == [
         {
             "model": "deepseek-test-model",

@@ -107,6 +107,25 @@ class AgentStep(BaseModel):
         ge=0.0,
         description="Elapsed seconds for this workflow step, if captured.",
     )
+    llm_provider: str | None = Field(
+        default=None,
+        description="LLM provider attempted or used for this step, if applicable.",
+    )
+    llm_model: str | None = Field(
+        default=None,
+        description="LLM model attempted or used for this step, if applicable.",
+    )
+    llm_used: bool | None = Field(
+        default=None,
+        description=(
+            "Whether this step used LLM output. False means deterministic fallback "
+            "or deterministic-only execution."
+        ),
+    )
+    llm_fallback_reason: str | None = Field(
+        default=None,
+        description="Reason deterministic fallback was used, if applicable.",
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -118,6 +137,139 @@ class AgentStep(BaseModel):
             msg = "Agent step field cannot be empty."
             raise ValueError(msg)
         return text
+
+
+class LLMCallEvent(BaseModel):
+    node_name: str
+    task: str
+    status: str
+    llm_provider: str | None = Field(
+        default=None,
+        description="LLM provider attempted or used for this model call.",
+    )
+    llm_model: str | None = Field(
+        default=None,
+        description="LLM model attempted or used for this model call.",
+    )
+    prompt_version: str | None = Field(
+        default=None,
+        description="Stable prompt/template version used for this model call.",
+    )
+    started_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the model call started, if attempted.",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the model call completed, if attempted.",
+    )
+    duration_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Elapsed seconds for this model call, if attempted.",
+    )
+    input_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="Provider-reported input token count, if available.",
+    )
+    output_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="Provider-reported output token count, if available.",
+    )
+    total_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="Provider-reported total token count, if available.",
+    )
+    provider_request_id: str | None = Field(
+        default=None,
+        description="Provider response/request identifier, if available.",
+    )
+    error_type: str | None = Field(
+        default=None,
+        description="Exception class or normalized provider error category.",
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Error message captured for failed model calls.",
+    )
+    fallback_used: bool | None = Field(
+        default=None,
+        description="Whether deterministic fallback handled the task after this event.",
+    )
+    fallback_reason: str | None = Field(
+        default=None,
+        description="Reason deterministic fallback was used, if applicable.",
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("node_name", "task", "status")
+    @classmethod
+    def required_text_must_not_be_blank(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            msg = "LLM call event field cannot be empty."
+            raise ValueError(msg)
+        return text
+
+
+class LLMUsageSummary(BaseModel):
+    total_calls: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of stored LLM-aware call events for this run.",
+    )
+    completed_calls: int = Field(
+        default=0,
+        ge=0,
+        description="Number of model-call events that completed successfully.",
+    )
+    failed_calls: int = Field(
+        default=0,
+        ge=0,
+        description="Number of model-call events that failed before fallback.",
+    )
+    skipped_calls: int = Field(
+        default=0,
+        ge=0,
+        description="Number of LLM-aware tasks skipped because no model call ran.",
+    )
+    fallback_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of events where deterministic fallback was used.",
+    )
+    total_duration_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Sum of captured model-call durations in seconds.",
+    )
+    total_input_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Sum of provider-reported input tokens where available.",
+    )
+    total_output_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Sum of provider-reported output tokens where available.",
+    )
+    total_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Sum of provider-reported total tokens where available.",
+    )
+    providers: list[str] = Field(
+        default_factory=list,
+        description="Sorted unique LLM providers seen in this run's call events.",
+    )
+    models: list[str] = Field(
+        default_factory=list,
+        description="Sorted unique LLM models seen in this run's call events.",
+    )
 
 
 class ResearchWarning(BaseModel):
@@ -280,6 +432,16 @@ class ResearchResponse(BaseModel):
 class AgentStepResponse(AgentStep):
     id: int
     research_run_id: str
+
+
+class LLMCallEventResponse(LLMCallEvent):
+    id: int
+    research_run_id: str
+
+
+class LLMUsageSummaryResponse(LLMUsageSummary):
+    run_id: UUID
+    status: ResearchStatus
 
 
 class ResearchProgressResponse(BaseModel):
