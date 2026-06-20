@@ -9,8 +9,18 @@ from finsight_agent.app.graph.builder import (
     build_research_graph,
 )
 from finsight_agent.app.services.company_resolver import CompanyRecord, CompanyResolver
+from finsight_agent.app.services.report_generator import RESEARCH_ONLY_NOTICE
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+SCAFFOLD_REPORT_MARKERS = (
+    "mvp draft",
+    "future versions will",
+    "pending deterministic synthesis",
+    "not been generated yet",
+    "future llm-assisted step",
+    "no sources were recorded",
+    "has not been performed yet",
+)
 
 
 class FakeSECClient:
@@ -598,10 +608,20 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert filing_10q_source["metadata_source_ids"] == ["sec_submissions"]
     assert datetime.fromisoformat(filing_10q_source["metadata_retrieved_at"])
     assert "# FinSight Research Brief: Apple Inc. (AAPL)" in result["final_report"]
+    assert RESEARCH_ONLY_NOTICE in result["final_report"]
     assert "## 5. Key Financial Metrics" in result["final_report"]
     assert "[sec_company_facts]" in result["final_report"]
     assert "[latest_10k]" in result["final_report"]
     assert result["compliance_status"] == "allowed"
+    assert result["report_quality_status"] == "passed"
+    assert not any(
+        marker in result["final_report"].casefold()
+        for marker in SCAFFOLD_REPORT_MARKERS
+    )
+    assert not any(
+        warning["code"] == "report_quality_warning"
+        for warning in result["warnings"]
+    )
     step_by_name = {step["node_name"]: step for step in result["agent_steps"]}
     assert step_by_name["fetch_sec_data"]["message"] == (
         "Fetched SEC submissions and company facts for CIK 0000320193; "
@@ -659,6 +679,12 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "compliance_check",
         "validate_report",
     ]
+    assert_agent_step(
+        result,
+        node_name="validate_report",
+        status="completed",
+        message="Report quality validation completed without warnings.",
+    )
     assert all(step["status"] == "completed" for step in result["agent_steps"])
     for step in result["agent_steps"]:
         assert_step_has_timing(step)

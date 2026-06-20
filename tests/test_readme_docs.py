@@ -138,3 +138,27 @@ def test_readme_documents_research_run_listing_workflow() -> None:
         "GET /research?status=failed&limit=20&cursor={next_cursor}",
     ]:
         assert phrase in workflow_section
+
+
+def test_readme_documents_report_quality_and_grounding() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "### Report Quality and Grounding" in readme
+    workflow_section = readme.split("### Report Quality and Grounding", maxsplit=1)[1]
+
+    for phrase in [
+        "11-section structure",
+        "research-only disclaimer",
+        "not financial advice",
+        "`[sec_company_facts]`",
+        "`[latest_10k]`",
+        "warnings or limitations",
+        "compliance_status",
+        "report_quality_status",
+        'report_quality_status="passed"',
+        "MVP draft",
+        "future versions will",
+        "pending deterministic synthesis",
+        "no sources were recorded",
+    ]:
+        assert phrase in workflow_section

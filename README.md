@@ -135,6 +135,33 @@ When a run is `completed`, read the `report`, `financial_metrics`,
 `errors`, `warnings`, and any partial `sources` for the reason and available
 diagnostics.
 
+### Report Quality and Grounding
+
+Generated reports are structured research briefs, not recommendations. Each
+final report keeps the required 11-section structure, includes the required
+research-only disclaimer, lists sources and limitations, and avoids financial
+advice language.
+
+The required disclaimer is:
+
+```text
+This report is for informational and educational research purposes only. It is
+not financial advice, investment advice, or a recommendation to buy, sell, or
+hold any security.
+```
+
+Reports cite known source IDs such as `[sec_company_facts]` and `[latest_10k]`
+for source-grounded financial, risk, bull-case, and bear-case claims. Missing
+data is surfaced as warnings or limitations instead of invented facts.
+
+Before persistence, the workflow runs deterministic compliance checks and then
+report quality validation. Completed runs expose `compliance_status` and
+`report_quality_status`; when enough SEC-derived evidence is available, normal
+research runs should finish with `report_quality_status="passed"`. The validator
+also guards against scaffold language. Examples include `MVP draft`,
+`future versions will`, `pending deterministic synthesis`, and
+`no sources were recorded`.
+
 On application startup, FinSight recovers stale in-progress runs. Any `queued`
 or `running` run older than `RESEARCH_RUN_STALE_AFTER_SECONDS` is marked
 `failed` with a structured `research_run_stale` error so polling clients do not

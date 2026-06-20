@@ -1,24 +1,29 @@
-# AGENTS.md
+# AGENTS_FULL.md
+
+Comprehensive guide for AI agents working on FinSight. The root `AGENTS.md` is
+the short operational guide; this file is the deeper project handbook.
 
 ## Project Identity
 
 FinSight is a production-style AI equity research assistant built with FastAPI,
-LangGraph, SEC EDGAR data, deterministic financial calculations, and a compliance
-layer that prevents personalized financial advice.
+LangGraph, SEC EDGAR data, deterministic financial calculations, SQLite
+persistence, optional LLM-assisted summarization/drafting, observability, and a
+compliance layer.
 
 The product is an evidence-based research assistant, not an investment advisor.
-It should help users understand public companies through source-grounded research
+It helps users understand public companies through source-grounded research
 briefs, SEC filings, financial metrics, business risks, and neutral bull/bear
 analysis.
 
 Primary positioning:
 
-> FinSight is a production-style AI equity research assistant built with
-> LangGraph. It orchestrates a multi-step research workflow that resolves public
-> companies, retrieves SEC filings, extracts financial metrics, summarizes
-> business risks, generates bull and bear research cases, and produces
-> source-grounded research briefs with a compliance layer that avoids personalized
-> investment advice.
+```text
+FinSight orchestrates a multi-step research workflow that resolves public
+companies, retrieves SEC filings, extracts financial metrics, summarizes
+business risks, generates neutral bull and bear research cases, and produces
+source-grounded research briefs with a compliance layer that avoids personalized
+investment advice.
+```
 
 ## Non-Negotiable Product Rules
 
@@ -43,23 +48,85 @@ not financial advice, investment advice, or a recommendation to buy, sell, or
 hold any security.
 ```
 
-## Current Project Stage
+## Current Project State
 
-The project is in its foundation stage.
+FinSight is no longer in its foundation stage. The backend MVP is substantially
+implemented.
 
-Current baseline:
+Implemented baseline:
 
 - UV-managed Python project.
 - Python target: `>=3.12,<3.15`.
 - Source layout under `src/finsight_agent`.
-- Minimal FastAPI app.
-- `GET /health` endpoint.
-- Basic config loading with Pydantic Settings.
-- `.env.example`.
-- Initial health endpoint test.
+- FastAPI app with health endpoint.
+- Pydantic settings with SEC and LLM configuration.
+- Normal test suite and ruff linting.
+- GitHub Actions CI for tests and lint.
 
-Do not assume the full agent already exists. Add capabilities incrementally and
-keep each stage testable.
+Implemented research workflow:
+
+- Deterministic company resolver.
+- SEC client for company tickers, submissions, company facts, filing metadata,
+  and filing documents.
+- SEC caching/diagnostic metadata where available.
+- Deterministic financial metrics extraction.
+- Filing text retrieval and risk-factor extraction.
+- Deterministic risk analysis fallback.
+- Optional LLM-assisted risk summarization.
+- Deterministic research insight synthesis.
+- Optional LLM-assisted report section drafting.
+- Deterministic report generation.
+- Deterministic compliance scan and safe rewrite path.
+- Deterministic report quality validation.
+- Stage 4N production report grounding: scaffold-language validation,
+  source-id citation checks, professional limitations, and graph-level proof
+  that normal SEC-evidence runs pass report quality validation.
+- LangGraph orchestration with typed state.
+- Structured warnings/errors instead of brittle crashes where graceful partial
+  output is possible.
+
+Implemented persistence and API capabilities:
+
+- Run-based research API.
+- Queued background research execution.
+- SQLite persistence with Alembic migrations.
+- Research runs with lifecycle statuses.
+- Stored final reports, warnings, errors, sources, metrics, agent steps, and LLM
+  call events.
+- Failed-run retry support.
+- Retry-chain retrieval.
+- Research progress summary.
+- Agent step audit trail.
+- LLM call event endpoint.
+- LLM usage summary endpoint.
+
+Current completed stage:
+
+```text
+4N - Report Quality and Grounding
+```
+
+Stage 4N made generated reports production-style by removing scaffold/MVP
+language and tightening quality/citation guarantees. The next named stage has
+not been selected yet.
+
+## Development Method
+
+Use a combination of spec-driven development and test-driven development.
+
+For every new stage:
+
+1. Write or update a spec first.
+2. Define acceptance criteria in concrete, testable language.
+3. Split work into small implementation slices.
+4. For each slice, write failing tests first.
+5. Implement the smallest production-quality change.
+6. Run focused tests, then full verification when the slice is complete.
+7. Update docs for user-facing or agent-facing behavior changes.
+
+This project values deterministic, reliable tests. Avoid exact snapshots of LLM
+prose; test structure, safety, citations, fallback behavior, and schema
+contracts.
 
 ## Local Development Commands
 
@@ -78,12 +145,10 @@ If UV has certificate issues on Windows, use:
 uv --system-certs sync
 ```
 
-Do not require manual virtual environment activation. It is acceptable to activate
-`.venv`, but prefer `uv run ...` in docs and examples.
+Do not require manual virtual environment activation. Prefer `uv run ...` in
+docs and examples.
 
-## High-Level Architecture
-
-Target architecture:
+## Current High-Level Architecture
 
 ```text
 User / Client
@@ -99,18 +164,21 @@ LangGraph Research Workflow
   |-- extract_financial_metrics
   |-- fetch_filing_text
   |-- analyze_risks
+  |-- synthesize_research
+  |-- draft_report
   |-- generate_report
   |-- compliance_check
+  |-- validate_report
   |-- persist_results
   |
   v
 SQLite locally / PostgreSQL-ready storage
   |
   v
-Research Brief
+Research result, report, diagnostics, sources, warnings, and audit trail
 ```
 
-Recommended package structure:
+Actual package structure:
 
 ```text
 src/finsight_agent/
@@ -122,44 +190,33 @@ src/finsight_agent/
       routes.py
       schemas.py
 
-    graph/
-      state.py
-      builder.py
-      nodes/
-        resolve_company.py
-        fetch_sec_data.py
-        extract_metrics.py
-        analyze_risks.py
-        generate_report.py
-        compliance_check.py
-        persist_results.py
-
-    services/
-      company_resolver.py
-      sec_client.py
-      filing_parser.py
-      metrics.py
-      llm_client.py
-      report_formatter.py
-      compliance.py
-      cache.py
-
     db/
       database.py
       models.py
       repository.py
 
-    prompts/
-      risk_analysis_prompt.py
-      report_prompt.py
-      compliance_prompt.py
+    graph/
+      builder.py
+      runner.py
+      state.py
 
-    utils/
-      logging.py
-      errors.py
+    services/
+      company_resolver.py
+      compliance.py
+      graph_result_validator.py
+      llm_client.py
+      llm_usage.py
+      metrics.py
+      report_generator.py
+      report_validator.py
+      research_job.py
+      research_synthesizer.py
+      risk_analyzer.py
+      sec_client.py
 ```
 
-Do not create every file prematurely. Grow this structure as features are added.
+Do not create unused structure prematurely. Grow the codebase around actual
+feature needs and existing local patterns.
 
 ## Layer Responsibilities
 
@@ -169,117 +226,122 @@ The API layer should:
 
 - Define HTTP endpoints.
 - Validate request and response bodies using Pydantic schemas.
-- Translate service or graph results into API responses.
+- Translate service, repository, or graph results into API responses.
 - Avoid complex business logic.
 - Return user-friendly errors.
 
-Core target endpoints:
+Current important endpoints:
 
 - `GET /health`
 - `POST /research`
+- `GET /research`
 - `GET /research/{run_id}`
+- `GET /research/{run_id}/progress`
+- `POST /research/{run_id}/retry`
+- `GET /research/{run_id}/retries`
 - `GET /research/{run_id}/steps`
-- `GET /companies/search?q=apple`
+- `GET /research/{run_id}/llm-calls`
+- `GET /research/{run_id}/llm-usage`
 
-For production readiness, prefer a run-based API:
-
-```text
-POST /research -> creates a queued run and returns 202 Accepted with run_id/status
-GET /research/{run_id} -> retrieves run state, final report, or structured errors
-GET /research/{run_id}/steps -> retrieves audit trail
-```
-
-The API is run-based: clients submit work, store the returned `run_id`, and poll
+The API is run-based. Clients submit work, store the returned `run_id`, and poll
 until the run reaches `completed` or `failed`.
 
 ### Services Layer
 
-The services layer should contain deterministic, testable business logic:
+The services layer contains deterministic, testable business logic:
 
 - Company resolution.
 - SEC API access.
-- Filing metadata parsing.
-- Filing text retrieval/parsing.
 - Financial metric extraction.
-- Compliance phrase scanning.
-- Report formatting helpers.
+- Filing/risk analysis helpers.
+- Research insight synthesis.
+- Report generation.
+- Report quality validation.
+- Compliance phrase scanning and safe rewriting.
+- LLM provider abstraction.
+- LLM usage summarization.
+- Research job/retry helpers.
 
 Services should not depend on FastAPI request objects.
 
 ### Graph Layer
 
-The graph layer should orchestrate workflow steps using LangGraph.
+The graph layer orchestrates workflow steps using LangGraph.
 
-Each major research step should be a graph node with a clear input/output
-contract. Nodes should update typed state and record warnings/errors instead of
-raising raw exceptions through the whole workflow when graceful continuation is
-possible.
+Each major research step is a graph node with a clear state contract. Nodes
+should update typed state and record warnings/errors instead of raising raw
+exceptions through the whole workflow when graceful continuation is possible.
+
+Graph nodes should record agent steps with timing and status. LLM-aware nodes
+should also record provider/model/fallback metadata and LLM call events.
 
 ### Database Layer
 
-The database layer should isolate persistence concerns:
+The database layer isolates persistence concerns:
 
-- SQLAlchemy/SQLModel models.
+- SQLAlchemy models.
 - Session management.
 - Repository functions.
-- Alembic migrations once persistence is introduced.
+- Alembic migrations.
 
-SQLite is the local default. Keep the design PostgreSQL-ready.
+SQLite is the local default. Keep schema choices PostgreSQL-ready where
+reasonable.
 
 ### LLM Layer
 
-The LLM layer should be provider-abstracted. Do not scatter direct OpenAI,
-DeepSeek, or other provider calls throughout graph nodes.
+The LLM layer is provider-abstracted. Do not scatter direct OpenAI, DeepSeek, or
+other provider calls throughout graph nodes.
 
-Use structured outputs with Pydantic where practical.
+Use structured outputs with Pydantic where practical. Validate LLM output before
+letting it affect final user-visible reports. Fall back deterministically when
+LLM output is unavailable, invalid, unsafe, or insufficiently cited.
 
 ## LangGraph State
 
-Use a typed state object. Target shape:
+Use the typed state in `src/finsight_agent/app/graph/state.py` as the source of
+truth. The state currently tracks fields including:
 
-```python
-class FinSightState(TypedDict):
-    run_id: str | None
-    user_query: str
-
-    ticker: str | None
-    company_name: str | None
-    cik: str | None
-    resolution_status: str | None
-    resolution_confidence: float | None
-
-    sec_submissions: dict | None
-    company_facts: dict | None
-    latest_10k: dict | None
-    latest_10q: dict | None
-    filing_text: str | None
-
-    financial_metrics: dict | None
-    risk_factors: list[dict]
-
-    report_draft: str | None
-    final_report: str | None
-
-    sources: list[dict]
-    warnings: list[dict]
-    errors: list[dict]
-
-    compliance_status: str | None
-    confidence: str | None
-    limitations: list[str]
+```text
+run_id
+user_query
+ticker
+company_name
+cik
+resolution_status
+resolution_confidence
+resolution_candidates
+sec_submissions
+company_facts
+latest_10k
+latest_10q
+filing_text
+risk_factors
+risk_themes
+financial_metrics
+research_insights
+llm_report_sections
+report_draft
+final_report
+compliance_status
+report_quality_status
+llm_call_events
+agent_steps
+sources
+warnings
+errors
 ```
 
 Prefer structured warnings/errors:
 
 ```json
 {
-  "code": "metric_missing",
-  "message": "Free cash flow could not be calculated because capital expenditure was unavailable.",
+  "code": "metric_warning",
+  "message": "Revenue could not be extracted from SEC company facts.",
   "severity": "warning"
 }
 ```
 
-## Required Workflow Nodes
+## Workflow Node Contracts
 
 ### `resolve_company`
 
@@ -290,7 +352,7 @@ Responsibilities:
 - Normalize CIK to 10 digits where needed.
 - Distinguish exact ticker match, exact company match, fuzzy match, ambiguous,
   and not found.
-- Never use the LLM for basic deterministic matching.
+- Never use an LLM for deterministic matching.
 
 Graceful behavior:
 
@@ -304,15 +366,15 @@ Responsibilities:
 - Fetch SEC submissions JSON.
 - Fetch SEC company facts JSON.
 - Identify latest 10-K and latest 10-Q metadata.
-- Track SEC source URLs, accession numbers, filing dates, and retrieval times.
-- Use a configurable SEC User-Agent.
-- Respect SEC usage with timeouts, retries, and reasonable rate limiting.
+- Track SEC source URLs, accession numbers, filing dates, retrieval times, cache
+  diagnostics, and source IDs.
+- Use configurable `SEC_USER_AGENT`.
 
 Graceful behavior:
 
 - SEC failures should produce structured warnings/errors.
-- Missing company facts should not crash the whole run if a qualitative report is
-  still possible.
+- Missing company facts should not crash the whole run if useful partial output
+  is still possible.
 
 ### `extract_financial_metrics`
 
@@ -322,14 +384,13 @@ Responsibilities:
 - Prefer annual 10-K facts where available.
 - Prefer USD units.
 - Deduplicate by fiscal year, period, form, and filed date.
-- Prefer latest filed value for the same period.
-- Separate duration metrics from instant metrics.
+- Prefer the latest filed value for the same period.
 - Calculate growth and margins in Python.
-- Track source XBRL tags and units.
+- Track source XBRL tags and source details.
 
-Do not use the LLM for calculations.
+Do not use an LLM for calculations.
 
-Target metrics:
+Implemented/target metrics include:
 
 - Revenue.
 - Revenue growth.
@@ -337,57 +398,52 @@ Target metrics:
 - Operating margin.
 - Net income.
 - Net margin.
-- Total assets.
-- Total liabilities.
-- Cash and cash equivalents.
-- Long-term debt.
 - Operating cash flow.
 - Capital expenditure.
 - Free cash flow.
-
-Use a tag priority system. Examples:
-
-```text
-Revenue:
-- RevenueFromContractWithCustomerExcludingAssessedTax
-- Revenues
-- SalesRevenueNet
-
-Net income:
-- NetIncomeLoss
-
-Operating income:
-- OperatingIncomeLoss
-
-Assets:
-- Assets
-
-Liabilities:
-- Liabilities
-
-Cash:
-- CashAndCashEquivalentsAtCarryingValue
-- CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
-```
+- Debt components where available.
 
 ### `fetch_filing_text`
 
 Responsibilities:
 
 - Retrieve latest 10-K filing text or primary document when available.
-- Track accession number, document URL, form type, filing date, and period.
-- Extract sections needed for risk analysis when feasible.
+- Track accession number, document URL, form type, filing date, report date, and
+  retrieval metadata.
+- Extract risk-factor text when feasible.
+- Surface missing text as warnings instead of inventing risk analysis.
 
 ### `analyze_risks`
 
 Responsibilities:
 
-- Summarize key business risks from the latest 10-K.
+- Summarize key business risks from latest 10-K risk-factor text.
+- Use deterministic fallback when no LLM client is configured or LLM output
+  fails.
 - Use the LLM only for summarization/classification.
-- Include source filing metadata with each risk.
+- Include source filing metadata and source IDs with each risk theme.
 - Avoid unsupported claims.
 
-If risk text cannot be retrieved, report the limitation.
+### `synthesize_research`
+
+Responsibilities:
+
+- Convert structured metrics, risk themes, and warnings into deterministic
+  research insights.
+- Generate neutral executive summary points, bull case points, bear case points,
+  and open questions.
+- Include source IDs on source-grounded points.
+
+### `draft_report`
+
+Responsibilities:
+
+- Optionally ask an LLM to draft report sections from structured evidence.
+- Require schema-valid report draft output.
+- Require citations in source-grounded LLM sections.
+- Fall back to deterministic generation when output is invalid, citationless,
+  unavailable, or unsafe.
+- Record LLM call events and fallback metadata.
 
 ### `generate_report`
 
@@ -398,6 +454,8 @@ Responsibilities:
 - Include warnings and limitations.
 - Include sources used.
 - Avoid recommendations and personalized advice.
+- Prefer LLM-drafted sections only after validation; otherwise use
+  deterministic sections.
 
 Required report sections:
 
@@ -421,8 +479,7 @@ Required report sections:
 
 Responsibilities:
 
-- Run a deterministic forbidden-phrase scan.
-- Optionally run an LLM semantic compliance review.
+- Run deterministic forbidden-phrase scan.
 - Rewrite unsafe language if possible.
 - Re-scan after rewriting.
 - Block unsafe final reports if forbidden language remains.
@@ -439,19 +496,9 @@ blocked
 Forbidden or high-risk language includes:
 
 ```text
-buy
-sell
-hold
-strong buy
-strong sell
-guaranteed
-risk-free
-you should invest
-put your money into
-allocate your portfolio
-this stock will definitely
-price will go up
-price will crash
+buy, sell, hold, strong buy, strong sell, guaranteed, risk-free,
+you should invest, put your money into, allocate your portfolio,
+this stock will definitely, price will go up, price will crash
 ```
 
 Allowed neutral research language includes:
@@ -459,22 +506,35 @@ Allowed neutral research language includes:
 ```text
 The bull case depends on...
 The bear case includes...
-Investors may want to investigate...
 A key risk is...
 The company's financial performance shows...
 ```
+
+### `validate_report`
+
+Responsibilities:
+
+- Run deterministic report quality checks after compliance.
+- Confirm required sections.
+- Confirm required disclaimer.
+- Confirm SEC source signal.
+- Confirm citations in citation-required sections.
+- Warn on unknown source citations.
+- Warn on weak/scaffold report content.
+- Warn on unsafe language if any remains.
 
 ### `persist_results`
 
 Responsibilities:
 
-- Store run status, final report, warnings, errors, sources, step metadata, and
-  financial metrics.
-- Do not let persistence failures silently corrupt user-facing state.
+- Store run status, final report, warnings, errors, sources, agent steps, LLM
+  call events, and metrics.
+- Validate graph result shape before persistence.
+- Do not silently corrupt user-facing state on persistence failures.
 
 ## Company Resolver Requirements
 
-The resolver should be deterministic and testable.
+The resolver is deterministic and tested.
 
 Resolution modes:
 
@@ -498,17 +558,7 @@ Target output:
 }
 ```
 
-For ambiguous input, return candidates:
-
-```json
-{
-  "resolution_status": "ambiguous",
-  "matches": [
-    {"ticker": "AAPL", "company_name": "Apple Inc.", "cik": "0000320193"},
-    {"ticker": "APLE", "company_name": "Apple Hospitality REIT, Inc.", "cik": "..."}
-  ]
-}
-```
+For ambiguous input, return candidates instead of guessing.
 
 ## SEC Data Requirements
 
@@ -524,19 +574,10 @@ The SEC client must:
 - Use `SEC_USER_AGENT` from settings.
 - Set reasonable timeouts.
 - Handle 4xx/5xx responses cleanly.
-- Support retry/backoff for transient failures.
+- Support retry/backoff for transient failures where implemented.
 - Avoid aggressive request rates.
 - Track source URLs and retrieval timestamps.
 - Be easy to mock in tests.
-
-Caching policy target:
-
-```text
-Company tickers mapping: cache for about 24 hours.
-Submissions JSON: cache for about 6-24 hours.
-Company facts JSON: cache for about 6-24 hours.
-Filing documents: cache by accession number where practical.
-```
 
 Do not hardcode personal email addresses in source code.
 
@@ -546,15 +587,20 @@ Every material source should be traceable.
 
 For filing sources, track:
 
+- Source ID.
 - Source type.
 - SEC URL.
+- Publisher.
 - Ticker.
+- Company name.
 - CIK.
 - Form type.
 - Accession number.
 - Filing date.
-- Period end date.
-- Retrieved timestamp.
+- Report date.
+- Primary document.
+- Retrieval timestamp.
+- Cache metadata where available.
 
 For metrics, track where possible:
 
@@ -576,62 +622,143 @@ Based on the latest available 10-K filed on YYYY-MM-DD...
 
 and avoid vague claims when the source or date is unknown.
 
+## Report Quality Requirements
+
+Reports must be source-grounded and production-style.
+
+Required:
+
+- The 11-section structure remains stable.
+- The required research-only disclaimer is present.
+- Financial, risk, bull, and bear sections include source IDs when they make
+  source-grounded claims.
+- Citations must refer to known source IDs where source metadata is available.
+- Sources section should list SEC data and filing sources with meaningful
+  metadata.
+- Limitations section should surface missing/uncertain data.
+- Raw filing text should not be copied into the final report.
+- Reports should be neutral and avoid investment advice.
+
+Disallowed scaffold language includes:
+
+```text
+MVP draft
+future versions will
+pending deterministic synthesis
+not been generated yet
+future LLM-assisted step
+no sources were recorded
+```
+
+Missing data should become a limitation or warning, not invented prose.
+
+## Stage 4N Status
+
+Stage 4N is Report Quality and Grounding. It is implemented.
+
+It was implemented with spec-driven development plus TDD:
+
+### 4N-0: Spec
+
+Created:
+
+```text
+docs/specs/4N-report-quality-grounding.md
+```
+
+The spec should include:
+
+- Problem statement.
+- Goals.
+- Non-goals.
+- Input contract.
+- Output/report contract.
+- Required language rules.
+- Required citation/source rules.
+- Required limitations behavior.
+- Acceptance criteria.
+- Test plan.
+- Definition of done.
+
+### 4N-1: Validator TDD
+
+Wrote failing tests in `tests/test_report_validator.py`, then strengthened
+`src/finsight_agent/app/services/report_validator.py`.
+
+The validator should catch scaffold language and weak content in Company
+Overview, Risk Factors, Bull Case, Bear Case, Sources, and Limitations where
+appropriate.
+
+### 4N-2: Generator TDD
+
+Wrote failing tests in `tests/test_report_generator.py`, then improved
+`src/finsight_agent/app/services/report_generator.py`.
+
+Generated reports should:
+
+- Include a careful company overview without invented facts.
+- Avoid scaffold/MVP/future-work language.
+- Include professional limitations even when no warnings exist.
+- Preserve source citations.
+- Avoid raw filing text.
+- Avoid financial advice language.
+
+### 4N-3: Graph Proof
+
+Added graph-level tests in `tests/test_graph.py` proving normal research runs:
+
+- Produce a final report.
+- Retain the required disclaimer.
+- End with `report_quality_status == "passed"` when enough SEC-derived evidence
+  exists.
+- Do not emit report quality warnings caused by scaffold language.
+- Include known citations such as `[sec_company_facts]` and `[latest_10k]`.
+- Preserve LLM fallback behavior.
+- Run compliance before quality validation.
+
+### 4N-4: Docs and Verification
+
+Updated README/docs after behavior was correct, then ran:
+
+```powershell
+uv run pytest
+uv run ruff check .
+```
+
 ## Data Quality and Limitations
 
 SEC data is messy. Code defensively.
 
-Use structured warnings for:
+Use structured warnings for issues such as:
 
-- `metric_missing`
-- `tag_fallback_used`
-- `stale_filing`
-- `multiple_units_found`
-- `non_usd_unit_ignored`
-- `incomplete_period`
-- `restated_value_possible`
-- `cash_flow_unavailable`
+- `metric_warning`
 - `filing_text_unavailable`
+- `risk_analysis_warning`
 - `sec_api_failure`
-- `llm_unavailable`
-- `compliance_rewrite_failed`
+- `llm_risk_analysis_unavailable`
+- `llm_report_drafting_unavailable`
+- `llm_input_truncated`
+- `compliance_warning`
+- `report_quality_warning`
 
 Reports must surface important limitations to the user.
 
-## Database Target
+## Database and Persistence
 
-Use SQLite for local development. Keep the schema PostgreSQL-ready.
+SQLite is the local default. Keep the schema PostgreSQL-ready.
 
-Target models:
+Important persisted concepts:
 
-### Company
+- Research runs.
+- Agent steps.
+- LLM call events.
+- Financial metrics where applicable.
+- Warnings/errors JSON.
+- Sources JSON.
+- Final report.
+- Retry lineage.
 
-```text
-id
-ticker
-company_name
-cik
-exchange
-created_at
-updated_at
-```
-
-### ResearchRun
-
-```text
-id
-query
-ticker
-company_name
-status
-final_report
-warnings_json
-sources_json
-error_message
-created_at
-completed_at
-```
-
-Recommended statuses:
+Research run statuses include:
 
 ```text
 queued
@@ -640,63 +767,43 @@ completed
 failed
 ```
 
-### AgentStep
+Agent steps should preserve:
 
-```text
-id
-research_run_id
-node_name
-status
-input_json
-output_json
-warnings_json
-error_message
-started_at
-completed_at
-duration_ms
-retry_count
-model_name
-token_usage_json
-```
+- Node name.
+- Status.
+- Message.
+- Error message.
+- Started/completed timestamps.
+- Duration.
+- LLM provider/model where applicable.
+- Whether LLM output was used.
+- LLM fallback reason.
 
-### FinancialMetric
+LLM call events should preserve:
 
-```text
-id
-research_run_id
-fiscal_year
-revenue
-revenue_growth
-operating_income
-operating_margin
-net_income
-net_margin
-assets
-liabilities
-cash
-debt
-operating_cash_flow
-capital_expenditure
-free_cash_flow
-source_json
-created_at
-```
-
-Use Alembic migrations once models are introduced.
+- Node name.
+- Task.
+- Status.
+- Provider/model.
+- Prompt version.
+- Started/completed timestamps.
+- Input/output/total tokens.
+- Provider request ID.
+- Fallback usage/reason.
+- Error type/message.
 
 ## LLM Usage Rules
 
 Allowed LLM usage:
 
-- Summarizing business descriptions.
-- Summarizing and categorizing risk factors.
-- Drafting the final report from structured evidence.
-- Semantic compliance checking.
-- Rewriting unsafe language into neutral research language.
+- Summarizing business/risk text.
+- Categorizing risk themes.
+- Drafting final report sections from structured evidence.
+- Compliance checking or safe rewriting.
 
 Disallowed LLM usage:
 
-- Ticker matching when deterministic matching is available.
+- Ticker/company resolver logic.
 - Raw financial calculations.
 - Inventing missing data.
 - Predicting prices as fact.
@@ -707,9 +814,13 @@ Prompting rules:
 
 - Provide structured evidence to the model.
 - Tell the model to avoid unsupported claims.
-- Tell the model to explicitly state when evidence is unavailable.
+- Tell the model to state when evidence is unavailable.
+- Require source citations for source-grounded report sections.
 - Validate structured outputs with Pydantic where possible.
 - Fail gracefully on invalid JSON or schema validation errors.
+
+Normal tests should use fake or mock LLM clients. Live LLM tests must remain
+opt-in.
 
 ## Error Handling
 
@@ -721,9 +832,12 @@ Handle these cases gracefully:
 - Missing company facts.
 - Missing 10-K.
 - Malformed filing data.
+- Filing text unavailable.
 - LLM timeout/failure.
 - Invalid LLM structured output.
+- LLM output missing required citations.
 - Compliance failure.
+- Report quality warning.
 - Database failure.
 
 User-facing errors should be clear and non-technical:
@@ -735,7 +849,7 @@ User-facing errors should be clear and non-technical:
 }
 ```
 
-Internal logs should preserve diagnostic detail without leaking secrets.
+Internal diagnostics should preserve detail without leaking secrets.
 
 ## Observability Requirements
 
@@ -743,37 +857,42 @@ Production-grade behavior requires traceability.
 
 Track:
 
-- Request ID.
 - Run ID.
 - Node name.
 - Node status.
 - Node duration.
-- Retry count.
-- SEC request URL/status/duration.
+- Warnings/errors.
+- Sources.
+- SEC source metadata and cache diagnostics.
 - LLM provider/model.
+- LLM task and prompt version.
 - Token usage where available.
-- Warnings and errors.
+- LLM provider request ID where available.
+- LLM fallback reason.
+- Retry lineage.
 
-Design for LangSmith or OpenTelemetry later, but do not block MVP progress on
-full tracing.
+Design for LangSmith or OpenTelemetry later, but do not block current progress
+on full tracing.
 
 ## Testing Strategy
 
-Add tests as features are introduced. Prioritize deterministic tests before LLM
-tests.
+Add tests as features are introduced. Prioritize deterministic tests before live
+service tests.
 
 Required test areas:
 
 ### Health/API
 
 - `GET /health` returns `{"status": "ok"}`.
+- OpenAPI exposes expected schemas and endpoints.
 
 ### Company Resolver
 
-- `AAPL` resolves to Apple Inc.
-- `MSFT` resolves to Microsoft Corporation.
-- Unknown ticker returns a clear not-found result.
-- Ambiguous company name returns candidates.
+- Exact ticker resolution.
+- Exact company resolution.
+- Fuzzy company resolution.
+- Ambiguous company candidates.
+- Not-found behavior.
 
 ### SEC Client
 
@@ -785,7 +904,9 @@ Test:
 - Company facts parsing.
 - Latest 10-K detection.
 - Latest 10-Q detection.
+- Filing document URL construction.
 - SEC error handling.
+- Cache diagnostics where applicable.
 
 ### Metrics Service
 
@@ -793,12 +914,35 @@ Test:
 
 - Revenue growth calculation.
 - Margin calculation.
+- Free cash flow calculation.
 - Missing values.
 - Fallback XBRL tags.
 - Annual 10-K preference.
-- Instant vs duration metric handling.
+- Unit handling.
+- Source/XBRL metadata.
 
-### Compliance Checker
+### Risk and Synthesis
+
+Test:
+
+- Risk-factor extraction availability.
+- Deterministic risk fallback.
+- LLM risk output normalization with fake clients.
+- Research insight synthesis.
+- Source IDs on bull/bear case points.
+
+### LLM Contracts
+
+Do not test exact model prose. Test:
+
+- Structured output validation.
+- Invalid JSON/schema failures.
+- Citation requirements.
+- Fallback behavior.
+- LLM call event metadata.
+- Usage summary rollups.
+
+### Compliance
 
 Unsafe examples should fail or be rewritten:
 
@@ -814,45 +958,45 @@ Safe examples should pass:
 The bull case depends on revenue growth and margin expansion.
 ```
 
+### Report Output
+
+Avoid snapshotting exact LLM prose. Test:
+
+- Required sections are present.
+- Disclaimer is present.
+- Forbidden advice phrases are absent.
+- Sources are included.
+- Known source IDs are cited.
+- Limitations are included when data is missing.
+- Scaffold/MVP language is absent.
+
 ### LangGraph
 
 Test:
 
 - Successful graph run.
 - Company resolution failure.
-- Missing metrics but report still generated with warnings.
+- Missing metrics but graceful warnings.
+- Missing filing text but graceful warnings.
+- Deterministic fallback when no LLM client is configured.
+- LLM-assisted happy path with fake clients.
+- LLM failure fallback.
+- Invalid/citationless LLM report fallback.
 - Compliance rewrite path.
-- Critical error path.
+- Compliance blocked path.
+- Report quality validation path.
 
-### Report Output
+### Persistence and API
 
-Avoid snapshotting exact LLM prose. Instead test:
+Test:
 
-- Required sections are present.
-- Disclaimer is present.
-- Forbidden advice phrases are absent.
-- Sources are included.
-- Limitations are included when data is missing.
-
-## Implementation Order
-
-Preferred build order:
-
-1. Maintain project foundation: UV, FastAPI app, config, health endpoint.
-2. Add company resolver and deterministic tests.
-3. Add SEC client with mocked tests.
-4. Add metrics extraction service with fixtures.
-5. Add graph state and initial LangGraph workflow.
-6. Wire `POST /research` to queued background graph execution.
-7. Add SQLite persistence and repositories.
-8. Add report generation with a mock LLM provider first.
-9. Add compliance checker.
-10. Add real LLM provider abstraction.
-11. Add run step audit trail endpoint.
-12. Add caching/retry/backoff.
-13. Add README polish, sample outputs, and deployment docs.
-
-Do not build a frontend before the backend workflow is reliable.
+- Research run lifecycle.
+- Background job persistence.
+- Retry and retry-chain behavior.
+- Agent step storage.
+- LLM call event storage.
+- LLM usage endpoint.
+- Migration coverage.
 
 ## Coding Guidelines
 
@@ -865,53 +1009,58 @@ Do not build a frontend before the backend workflow is reliable.
 - Avoid hardcoded secrets, emails, API keys, or local machine paths.
 - Add tests with every meaningful behavior change.
 - Keep error messages user-friendly at API boundaries.
-- Preserve detailed diagnostics in structured logs or step records.
-- Use `ruff` and `pytest` before considering a change complete.
+- Preserve detailed diagnostics in structured warnings, steps, or call events.
+- Use `ruff` and `pytest` before considering code changes complete.
 
 ## File Editing Guidelines for Agents
 
-- Do not edit generated environments such as `.venv/`, `venv/`, `.ruff_cache/`,
-  or `.pytest_cache/`.
+- Do not edit `.venv/`, `venv/`, `.ruff_cache/`, `.pytest_cache/`, or `.env`.
 - Do not commit or rely on `.env` contents.
-- Do update `.env.example` when adding new required environment variables.
-- Do update tests when adding behavior.
-- Do update README or docs when changing user-facing setup or commands.
+- Update `.env.example` when adding new required environment variables.
+- Update tests when adding behavior.
+- Update README or docs when changing user-facing setup or commands.
 - Do not delete or overwrite user work without explicit instruction.
 
-## Definition of Done for MVP
+## What Is Left
 
-The MVP is complete when:
+Post-4N likely remaining work includes:
+
+- More realistic company overview sourcing from SEC business descriptions or
+  controlled external metadata.
+- More robust filing section extraction beyond risk factors.
+- Better financial formatting, units, scaling, and period comparisons.
+- More nuanced report quality scoring and citation coverage checks.
+- More live LLM provider testing and production configuration docs.
+- PostgreSQL deployment readiness.
+- API auth/rate limiting if externally exposed.
+- Deployment docs/containerization.
+- Optional frontend or report viewing UI.
+- Optional export formats such as Markdown/PDF after report content quality is
+  strong.
+- More live SEC smoke tests and operational monitoring.
+- Risk-factor change detection between latest and previous 10-K filings.
+
+Do not build a frontend before the backend workflow and report quality are
+reliable.
+
+## Definition of Done for Current Backend MVP
+
+The backend MVP is strong when:
 
 - A user can call `POST /research` with a ticker and receive a queued run ID.
 - The system resolves the company.
 - The system fetches SEC data.
 - The system calculates basic financial metrics.
-- The system generates a structured research report.
-- The system runs a compliance check.
+- The system analyzes risks or records a clear limitation.
+- The system generates a structured, source-grounded report.
+- The system runs compliance and report quality validation.
 - The result is stored in the database.
-- The user can poll the research run by ID until it is `completed` or `failed`.
-- Core functionality is covered by tests.
-- The README explains the project clearly.
-- The report avoids financial advice.
+- The user can poll by run ID until `completed` or `failed`.
+- The user can inspect progress, steps, sources, warnings, LLM calls, and LLM
+  usage.
+- Core functionality is covered by deterministic tests.
+- CI runs tests and lint.
+- The README explains local use clearly.
+- The report avoids financial advice and scaffold language.
 
-## Future Enhancements
-
-Do not build these until the core MVP is stable:
-
-- Frontend dashboard.
-- PDF export.
-- Historical metric charts.
-- Peer comparison.
-- FRED macroeconomic data.
-- Earnings transcript analysis.
-- Risk-factor change detection between latest and previous 10-K filings.
-- Watchlist monitoring.
-- Human review/editing workflow.
-- LangSmith tracing.
-- PostgreSQL and pgvector.
-- Docker deployment.
-
-The strongest V2 feature would be:
-
-> Compare the latest 10-K risk factors with the previous 10-K and highlight new,
-> removed, or expanded risks.
+When in doubt, keep the MVP small, traceable, source-grounded, and safe.

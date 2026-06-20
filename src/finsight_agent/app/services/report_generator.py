@@ -42,8 +42,13 @@ def generate_research_report(
                 drafted_sections,
             ),
             "## 3. Company Overview\n\n"
-            "A detailed business overview has not been generated yet. This section "
-            "will later be grounded in filing text and company descriptions.",
+            + _company_overview_section(
+                company_name,
+                ticker,
+                latest_10k,
+                latest_10q,
+                sources,
+            ),
             "## 4. Financial Performance\n\n"
             + _financial_performance_summary(metrics, drafted_sections),
             "## 5. Key Financial Metrics\n\n" + _metrics_table(metrics),
@@ -83,7 +88,10 @@ def _financial_performance_summary(
 
     periods = financial_metrics.get("periods", [])
     if not periods:
-        return "Financial metrics were unavailable or could not be extracted."
+        return (
+            "Financial metrics were unavailable from SEC company facts for this run. "
+            f"{_format_citations([SEC_COMPANY_FACTS_SOURCE_ID])}"
+        )
 
     latest = periods[-1]
     fiscal_year = latest.get("fy", "latest available period")
@@ -150,8 +158,66 @@ def _sources_section(
         )
 
     if not source_lines:
-        return "No sources were recorded."
+        return (
+            "- No source records were available for this run. Source-grounded claims "
+            "are limited to evidence with recorded source IDs."
+        )
     return "\n".join(source_lines)
+
+
+def _company_overview_section(
+    company_name: str,
+    ticker: str,
+    latest_10k: dict[str, Any] | None,
+    latest_10q: dict[str, Any] | None,
+    sources: list[dict[str, Any]],
+) -> str:
+    source_ids = _source_ids_from_sources(sources)
+    overview_lines = [
+        f"{company_name} ({ticker}) is the resolved company for this research brief."
+    ]
+
+    source_labels = _overview_source_labels(source_ids, latest_10k, latest_10q)
+    if source_labels:
+        citations = _format_citations(_overview_source_citations(source_ids))
+        overview_lines.append(
+            "The report is based on available SEC source records, including "
+            f"{_join_readable(source_labels)}.{_citation_suffix(citations)}"
+        )
+    else:
+        overview_lines.append(
+            "No business-description source was available in this run, so the "
+            "overview is limited to the resolved company identity."
+        )
+
+    return "\n\n".join(overview_lines)
+
+
+def _overview_source_labels(
+    source_ids: set[str],
+    latest_10k: dict[str, Any] | None,
+    latest_10q: dict[str, Any] | None,
+) -> list[str]:
+    labels: list[str] = []
+    if "sec_submissions" in source_ids:
+        labels.append("SEC submissions")
+    if SEC_COMPANY_FACTS_SOURCE_ID in source_ids:
+        labels.append("SEC company facts")
+    if latest_10k and LATEST_10K_SOURCE_ID in source_ids:
+        labels.append("the latest 10-K filing metadata")
+    if latest_10q and LATEST_10Q_SOURCE_ID in source_ids:
+        labels.append("the latest 10-Q filing metadata")
+    return labels
+
+
+def _overview_source_citations(source_ids: set[str]) -> list[str]:
+    ordered_source_ids = (
+        "sec_submissions",
+        SEC_COMPANY_FACTS_SOURCE_ID,
+        LATEST_10K_SOURCE_ID,
+        LATEST_10Q_SOURCE_ID,
+    )
+    return [source_id for source_id in ordered_source_ids if source_id in source_ids]
 
 
 def _executive_summary_section(
@@ -170,9 +236,8 @@ def _executive_summary_section(
 
     return (
         f"{company_name} ({ticker}) was analyzed using available SEC filing "
-        "metadata and structured company facts. This draft is generated from "
-        "deterministic data extraction and should be reviewed alongside the "
-        "source filings."
+        "metadata and structured company facts. The analysis should be reviewed "
+        "alongside the source filings."
     )
 
 
@@ -185,8 +250,8 @@ def _research_points_section(
 
     if not points:
         return (
-            "This section is pending deterministic synthesis from grounded "
-            "financial metrics and filing evidence."
+            "- No source-grounded case points were produced from the available "
+            "evidence in this run."
         )
 
     return "\n".join(_format_research_point(point) for point in points)
@@ -233,8 +298,8 @@ def _risk_factors_section(
 
     if not risk_factors:
         return (
-            "Risk factor analysis has not been performed yet. Future versions will "
-            "summarize risks from the latest available 10-K filing."
+            "Risk-factor text was not available in this run, so this report does "
+            "not summarize filing risk themes."
         )
 
     latest = risk_factors[0]
@@ -242,8 +307,7 @@ def _risk_factors_section(
     filing_date = latest.get("filing_date", "an unknown date")
     summary = (
         f"Risk-factor text was retrieved from the latest {form} filed {filing_date}. "
-        "A future LLM-assisted step will summarize this extracted text into "
-        "source-grounded risk themes."
+        "No summarized risk themes were available for this run."
     )
     return f"{summary}{_citation_suffix(_format_citations(latest.get('source_ids')))}"
 
@@ -263,7 +327,11 @@ def _format_risk_theme(theme: dict[str, Any]) -> str:
 
 def _limitations_section(warnings: list[dict[str, Any]]) -> str:
     if not warnings:
-        return "- This report is an MVP draft and does not yet include risk-factor analysis."
+        return (
+            "- This report is limited to the SEC-derived evidence available in this run.\n"
+            "- It does not include market prices, valuation targets, or personalized "
+            "investment context."
+        )
 
     return "\n".join(f"- {warning.get('message', warning)}" for warning in warnings)
 
@@ -324,6 +392,26 @@ def _source_detail_fragments(source: dict[str, Any]) -> list[str]:
         details.append(f"metadata retrieved {source['metadata_retrieved_at']}")
 
     return details
+
+
+def _source_ids_from_sources(sources: list[dict[str, Any]]) -> set[str]:
+    source_ids: set[str] = set()
+    for source in sources:
+        source_id = source.get("source_id")
+        if source_id is None:
+            continue
+        normalized = str(source_id).strip()
+        if normalized:
+            source_ids.add(normalized)
+    return source_ids
+
+
+def _join_readable(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    if len(items) == 2:
+        return " and ".join(items)
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
 def _plain_bullet_section(items: list[str]) -> str:

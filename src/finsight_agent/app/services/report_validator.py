@@ -22,9 +22,12 @@ REQUIRED_SECTIONS = (
 )
 
 CONTENT_SECTIONS = (
+    "## 3. Company Overview",
     "## 6. Risk Factors",
     "## 7. Bull Case",
     "## 8. Bear Case",
+    "## 10. Sources Used",
+    "## 11. Limitations",
 )
 
 CITATION_REQUIRED_SECTIONS = (
@@ -35,9 +38,16 @@ CITATION_REQUIRED_SECTIONS = (
 )
 
 WEAK_SECTION_MARKERS = (
+    "mvp draft",
+    "future versions will",
+    "future llm-assisted step",
+    "has not been performed yet",
+    "not been generated yet",
+    "not generated yet",
     "pending deterministic synthesis",
     "risk factor analysis has not been performed yet",
     "no sources were recorded",
+    "will later be grounded",
 )
 
 CITATION_PATTERN = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*)\]")

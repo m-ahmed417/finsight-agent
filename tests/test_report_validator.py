@@ -1,3 +1,5 @@
+import pytest
+
 from finsight_agent.app.services.report_generator import RESEARCH_ONLY_NOTICE
 from finsight_agent.app.services.report_validator import (
     ReportQualityStatus,
@@ -18,7 +20,10 @@ VALID_REPORT = "\n\n".join(
         "## 8. Bear Case\n\n- **Competition**: Competition could pressure performance. [latest_10k]",
         "## 9. Open Questions for Further Research\n\n- What changed in the latest filing?",
         "## 10. Sources Used\n\n- [sec_company_facts] SEC company facts: https://data.sec.gov/example.json\n- [latest_10k] Latest 10-K: https://www.sec.gov/Archives/example.htm",
-        "## 11. Limitations\n\n- This is a source-grounded MVP draft.",
+        (
+            "## 11. Limitations\n\n"
+            "- This report is limited to the SEC-derived evidence available in this run."
+        ),
     ]
 )
 
@@ -121,3 +126,92 @@ def test_empty_quality_sections_return_warnings() -> None:
         "message": "Report section needs stronger source-grounded content: ## 7. Bull Case.",
         "severity": "warning",
     } in result.warnings
+
+
+@pytest.mark.parametrize(
+    ("section", "replacement"),
+    [
+        (
+            "## 3. Company Overview",
+            (
+                "A detailed business overview has not been generated yet. This section "
+                "will later be grounded in filing text and company descriptions."
+            ),
+        ),
+        (
+            "## 6. Risk Factors",
+            (
+                "Risk factor analysis has not been performed yet. Future versions will "
+                "summarize risks from the latest available 10-K filing. [latest_10k]"
+            ),
+        ),
+        (
+            "## 7. Bull Case",
+            (
+                "This section is pending deterministic synthesis from grounded "
+                "financial metrics and filing evidence. [sec_company_facts]"
+            ),
+        ),
+        (
+            "## 8. Bear Case",
+            (
+                "A future LLM-assisted step will summarize this extracted text into "
+                "source-grounded risk themes. [latest_10k]"
+            ),
+        ),
+        (
+            "## 10. Sources Used",
+            "No sources were recorded.",
+        ),
+        (
+            "## 11. Limitations",
+            "This report is an MVP draft and does not yet include risk-factor analysis.",
+        ),
+    ],
+)
+def test_scaffold_language_in_protected_sections_returns_warning(
+    section: str,
+    replacement: str,
+) -> None:
+    report = _replace_section_body(VALID_REPORT, section, replacement)
+
+    result = validate_report_quality(report, sources=VALID_SOURCES)
+
+    assert result.status == ReportQualityStatus.WARNING
+    assert _weak_section_warning(section) in result.warnings
+
+
+def test_professional_missing_data_limitations_do_not_trigger_weak_warning() -> None:
+    report = _replace_section_body(
+        VALID_REPORT,
+        "## 11. Limitations",
+        (
+            "- Risk-factor text was not available in this run, so this report does "
+            "not summarize filing risk themes.\n"
+            "- Financial metrics were unavailable from SEC company facts for this run."
+        ),
+    )
+
+    result = validate_report_quality(report, sources=VALID_SOURCES)
+
+    assert result.status == ReportQualityStatus.PASSED
+    assert not any(
+        warning["code"] == "weak_report_section" for warning in result.warnings
+    )
+
+
+def _replace_section_body(report: str, section: str, replacement: str) -> str:
+    start = report.find(section)
+    assert start != -1
+    body_start = start + len(section) + len("\n\n")
+    next_heading = report.find("\n\n## ", body_start)
+    body_end = len(report) if next_heading == -1 else next_heading
+    return f"{report[:body_start]}{replacement}{report[body_end:]}"
+
+
+def _weak_section_warning(section: str) -> dict[str, str]:
+    return {
+        "code": "weak_report_section",
+        "message": f"Report section needs stronger source-grounded content: {section}.",
+        "severity": "warning",
+    }
