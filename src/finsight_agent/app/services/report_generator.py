@@ -1,5 +1,11 @@
 from typing import Any
 
+from finsight_agent.app.services.financial_presentation import (
+    build_period_analysis,
+    format_percentage_value,
+    format_usd_value,
+)
+
 RESEARCH_ONLY_NOTICE = (
     "This report is for informational and educational research purposes only. "
     "It is not financial advice, investment advice, or a recommendation to buy, "
@@ -98,15 +104,17 @@ def _financial_performance_summary(
 
     latest = periods[-1]
     fiscal_year = latest.get("fy", "latest available period")
-    revenue = _format_value(latest.get("revenue"))
-    net_income = _format_value(latest.get("net_income"))
-    free_cash_flow = _format_value(latest.get("free_cash_flow"))
+    revenue = format_usd_value(latest.get("revenue"))
+    net_income = format_usd_value(latest.get("net_income"))
+    free_cash_flow = format_usd_value(latest.get("free_cash_flow"))
 
     summary = (
         f"For fiscal year {fiscal_year}, extracted revenue was {revenue}, "
         f"net income was {net_income}, and free cash flow was {free_cash_flow}."
     )
-    return f"{summary} {_format_citations([SEC_COMPANY_FACTS_SOURCE_ID])}"
+    lines = [f"{summary} {_format_citations([SEC_COMPANY_FACTS_SOURCE_ID])}"]
+    lines.extend(build_period_analysis(periods))
+    return "\n\n".join(lines)
 
 
 def _metrics_table(financial_metrics: dict[str, Any]) -> str:
@@ -122,14 +130,23 @@ def _metrics_table(financial_metrics: dict[str, Any]) -> str:
         " | ".join(
             [
                 f"| {period.get('fy')}",
-                _format_value(period.get("revenue")),
-                _format_percentage(period.get("revenue_growth")),
-                _format_percentage(period.get("operating_margin")),
-                _format_percentage(period.get("net_margin")),
-                f"{_format_value(period.get('free_cash_flow'))} |",
+                format_usd_value(period.get("revenue")),
+                format_percentage_value(period.get("revenue_growth")),
+                format_percentage_value(period.get("operating_margin")),
+                format_percentage_value(period.get("net_margin")),
+                f"{format_usd_value(period.get('free_cash_flow'))} |",
             ]
         )
         for period in periods
+    )
+    rows.extend(
+        [
+            "",
+            (
+                "Source cue: financial metrics are derived from SEC company facts. "
+                f"{_format_citations([SEC_COMPANY_FACTS_SOURCE_ID])}"
+            ),
+        ]
     )
     return "\n".join(rows)
 
@@ -390,18 +407,6 @@ def _append_unique_text(items: list[str], seen: set[str], value: Any) -> None:
         return
     items.append(text)
     seen.add(text)
-
-
-def _format_value(value: Any) -> str:
-    if value is None:
-        return "N/A"
-    return str(value)
-
-
-def _format_percentage(value: Any) -> str:
-    if value is None:
-        return "N/A"
-    return f"{value:.2%}"
 
 
 def _format_source_line(source: dict[str, Any]) -> str:

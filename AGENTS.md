@@ -47,12 +47,16 @@ Already implemented:
   evidence contracts, structured LLM fallback validation, and opt-in provider
   smoke tests for risk analysis, report drafting, and live SEC plus LLM graph
   execution.
+- Stage 4Q financial presentation: readable financial values, deterministic
+  period comparisons, `financial_presentation` helpers, formatted report
+  financial sections, and LLM report draft financial performance guardrails
+  that reject raw metric values.
 - GitHub Actions CI for tests and linting.
 
 Current completed stage:
 
 ```text
-4P - LLM Provider Integration and Agent Testing
+4Q - Financial Presentation and Period Analysis
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic business
@@ -67,6 +71,14 @@ Provider smoke tests use `RUN_LIVE_LLM_TESTS` and cover risk analysis
 and report drafting. The end-to-end live run uses
 `RUN_LIVE_SEC_LLM_GRAPH_TESTS` and exercises real SEC data plus the configured
 real LLM provider without making exact prose assertions.
+
+Stage 4Q added readable financial values and deterministic period comparisons
+to final reports. Use `docs/specs/4Q-financial-presentation-period-analysis.md`
+as the stage spec. Raw metric values remain available internally for
+calculations and API payloads, but report financial sections use formatted
+values such as `$1.25B`, `$280.0M`, percentages such as `25.0%`, and `N/A` for
+missing data. LLM report draft financial performance text that repeats raw
+metric values is rejected and falls back to deterministic report generation.
 
 ## Development Method
 
@@ -87,6 +99,7 @@ The recent stage specs are:
 docs/specs/4N-report-quality-grounding.md
 docs/specs/4O-business-overview-filing-evidence.md
 docs/specs/4P-llm-provider-integration-agent-testing.md
+docs/specs/4Q-financial-presentation-period-analysis.md
 ```
 
 ## Core Rules
@@ -188,6 +201,11 @@ Reports must:
 - Use known `source_id` citations for source-grounded claims.
 - Use latest 10-K Item 1 Business evidence for Company Overview when available.
 - Cite `[latest_10k]` when Company Overview uses business-section evidence.
+- Present financial metrics as readable financial values while keeping raw
+  metric values internal.
+- Include deterministic period comparisons when enough fiscal-year data exists.
+- Cite `[sec_company_facts]` for financial performance and metrics-table
+  source cues.
 - Avoid raw copied filing text.
 - Avoid raw Item 1 text in final reports.
 - Avoid financial advice language.
@@ -212,6 +230,7 @@ Disallowed LLM uses:
 - Filling missing facts.
 - Price predictions as fact.
 - Buy/sell/hold advice.
+- LLM report draft financial performance text that repeats raw metric values.
 
 LLM-aware workflow steps should preserve diagnostics:
 
@@ -279,6 +298,10 @@ Stage 4O was implemented in small, tested slices:
 
 Stage 4P was implemented in small, tested slices:
 
+```text
+4P - LLM Provider Integration and Agent Testing
+```
+
 1. `4P-0`: Wrote `docs/specs/4P-llm-provider-integration-agent-testing.md`.
 2. `4P-1`: Hardened LLM provider configuration for real providers.
 3. `4P-2`: Hardened prompt/evidence contracts and prompt sanitization.
@@ -287,5 +310,21 @@ Stage 4P was implemented in small, tested slices:
    testing.
 6. `4P-5`: Added the opt-in live SEC plus LLM graph smoke test and completed
    controlled agent testing docs.
+
+Stage 4Q was implemented in small, tested slices:
+
+```text
+4Q - Financial Presentation and Period Analysis
+```
+
+1. `4Q-0`: Wrote `docs/specs/4Q-financial-presentation-period-analysis.md`.
+2. `4Q-1`: Added tested `financial_presentation` helpers for readable
+   financial values and percentages.
+3. `4Q-2`: Added deterministic period comparisons for revenue, margins, and
+   free cash flow.
+4. `4Q-3`: Integrated formatted financial presentation into report generation.
+5. `4Q-4`: Added graph proof and rejected LLM report draft financial
+   performance text that repeats raw metric values.
+6. `4Q-5`: Updated docs and ran full verification.
 
 When in doubt, keep the MVP small, traceable, source-grounded, and safe.

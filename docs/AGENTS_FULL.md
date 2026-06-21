@@ -90,6 +90,10 @@ Implemented research workflow:
   evidence contracts, structured LLM fallback validation, and opt-in provider
   smoke tests for risk analysis, report drafting, and live SEC plus LLM graph
   execution.
+- Stage 4Q financial presentation: readable financial values, deterministic
+  period comparisons, `financial_presentation` helpers, formatted Financial
+  Performance and Key Financial Metrics report sections, and LLM report draft
+  financial performance validation that rejects raw metric values.
 - LangGraph orchestration with typed state.
 - Structured warnings/errors instead of brittle crashes where graceful partial
   output is possible.
@@ -112,7 +116,7 @@ Implemented persistence and API capabilities:
 Current completed stage:
 
 ```text
-4P - LLM Provider Integration and Agent Testing
+4Q - Financial Presentation and Period Analysis
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic Company
@@ -126,6 +130,14 @@ end-to-end live run last. Provider smoke tests use `RUN_LIVE_LLM_TESTS` and cove
 risk analysis and report drafting. The end-to-end live run uses
 `RUN_LIVE_SEC_LLM_GRAPH_TESTS` and exercises real SEC data plus the configured
 real LLM provider without making exact prose assertions.
+
+Stage 4Q added readable financial values and deterministic period comparisons
+to final reports. Use `docs/specs/4Q-financial-presentation-period-analysis.md`
+as the Stage 4Q spec. Raw metric values stay internal for calculations,
+persistence, API payloads, and tests; report financial sections use formatted
+values such as `$1.25B`, `$280.0M`, percentages such as `25.0%`, and `N/A` for
+missing values. LLM report draft financial performance text that repeats raw
+metric values is rejected and falls back to deterministic report generation.
 
 ## Development Method
 
@@ -652,6 +664,11 @@ Required:
 - Citations must refer to known source IDs where source metadata is available.
 - Company Overview should use latest 10-K Item 1 Business evidence when
   available and cite `[latest_10k]`.
+- Financial sections should present readable financial values while raw metric
+  values remain internal.
+- Financial sections should include deterministic period comparisons when
+  enough comparable fiscal-year data exists.
+- Financial claims and metrics-table source cues should cite `[sec_company_facts]`.
 - Sources section should list SEC data and filing sources with meaningful
   metadata.
 - Limitations section should surface missing/uncertain data.
@@ -796,6 +813,10 @@ Sources Used, avoid raw Item 1 text, and still pass report quality validation.
 
 Stage 4P is LLM Provider Integration and Agent Testing. It is implemented.
 
+```text
+4P - LLM Provider Integration and Agent Testing
+```
+
 The stage spec is:
 
 ```text
@@ -822,6 +843,36 @@ Controlled model testing order:
    smoke tests pass.
 
 Do not require real model API access in normal unit tests or default CI.
+
+## Stage 4Q Status
+
+Stage 4Q is Financial Presentation and Period Analysis. It is implemented.
+
+The stage spec is:
+
+```text
+docs/specs/4Q-financial-presentation-period-analysis.md
+```
+
+Implemented:
+
+- `4Q-0`: Wrote the Stage 4Q spec.
+- `4Q-1`: Added tested `financial_presentation` helpers for readable financial
+  values and one-decimal percentages.
+- `4Q-2`: Added deterministic period comparisons for revenue direction,
+  margin movement, free cash flow changes, one-period limitations, and prior
+  revenue of zero.
+- `4Q-3`: Integrated formatted values, `N/A` handling, `[sec_company_facts]`
+  source cues, and comparison text into report financial sections.
+- `4Q-4`: Added graph proof that normal SEC-evidence runs produce formatted
+  financial sections and pass report quality validation. LLM report draft
+  financial performance text that repeats raw metric values now triggers
+  deterministic fallback.
+- `4Q-5`: Updated README and agent docs, then ran full verification.
+
+Keep financial calculations deterministic. LLMs may draft report language only
+after validation; they must not calculate values, fill missing metrics, or
+bypass the readable financial presentation layer.
 
 ## Data Quality and Limitations
 
@@ -1127,7 +1178,8 @@ Post-4O likely remaining work includes:
   additional sections beyond Item 1 Business and Item 1A Risk Factors.
 - Controlled external metadata only if it can remain source-grounded and
   citation-aware.
-- Better financial formatting, units, scaling, and period comparisons.
+- Deeper financial analysis only where it can remain deterministic,
+  source-grounded, and well tested.
 - More nuanced report quality scoring and citation coverage checks.
 - More live LLM provider testing and production configuration docs.
 - PostgreSQL deployment readiness.

@@ -264,6 +264,24 @@ class UnknownCitationReportDraftLLMClient(FakeLLMClient):
         }
 
 
+class RawFinancialValueReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": (
+                    "For fiscal 2024, extracted revenue was 1250000000 and "
+                    "free cash flow was 280000000. [sec_company_facts]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
 class UnsafeReportDraftLLMClient(FakeLLMClient):
     def draft_report(self, evidence: dict) -> dict:
         return {
@@ -728,6 +746,26 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert "## 5. Key Financial Metrics" in result["final_report"]
     assert "[sec_company_facts]" in result["final_report"]
     assert "[latest_10k]" in result["final_report"]
+    financial_performance = extract_report_section(
+        result["final_report"],
+        "## 4. Financial Performance",
+    )
+    metrics_section = extract_report_section(
+        result["final_report"],
+        "## 5. Key Financial Metrics",
+    )
+    financial_sections = financial_performance + metrics_section
+    assert "$1.25B" in financial_performance
+    assert "$250.0M" in financial_performance
+    assert "$280.0M" in financial_performance
+    assert "Revenue increased 25.0% from fiscal year 2023 to 2024." in financial_performance
+    assert "| 2024 | $1.25B | 25.0% | 24.0% | 20.0% | $280.0M |" in metrics_section
+    assert (
+        "Source cue: financial metrics are derived from SEC company facts. "
+        "[sec_company_facts]"
+    ) in metrics_section
+    assert "1250000000" not in financial_sections
+    assert "280000000" not in financial_sections
     overview_section = extract_report_section(
         result["final_report"],
         "## 3. Company Overview",
@@ -1429,6 +1467,60 @@ def test_research_graph_falls_back_when_llm_report_draft_uses_unknown_citation()
     assert draft_step["llm_used"] is False
     assert draft_step["llm_fallback_reason"] == (
         "LLM report draft cited unknown source_id: made_up_source."
+    )
+    assert result["report_quality_status"] == "passed"
+
+
+def test_research_graph_falls_back_when_llm_report_draft_uses_raw_financial_values() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=RawFinancialValueReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+    financial_performance = extract_report_section(
+        result["final_report"],
+        "## 4. Financial Performance",
+    )
+    metrics_section = extract_report_section(
+        result["final_report"],
+        "## 5. Key Financial Metrics",
+    )
+
+    assert result["llm_report_sections"] is None
+    assert "1250000000" not in financial_performance
+    assert "280000000" not in financial_performance
+    assert "$1.25B" in financial_performance
+    assert "$280.0M" in financial_performance
+    assert "| 2024 | $1.25B | 25.0% | 24.0% | 20.0% | $280.0M |" in metrics_section
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": (
+            "LLM report draft financial performance used unformatted raw "
+            "metric values."
+        ),
+        "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
+    } in result["warnings"]
+    assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
     )
     assert result["report_quality_status"] == "passed"
 

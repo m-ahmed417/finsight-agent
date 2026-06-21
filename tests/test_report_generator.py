@@ -112,6 +112,14 @@ def test_generate_research_report_includes_metrics_table() -> None:
         financial_metrics={
             "periods": [
                 {
+                    "fy": 2023,
+                    "revenue": 1000000000,
+                    "operating_margin": 0.20,
+                    "net_income": 150000000,
+                    "net_margin": 0.15,
+                    "free_cash_flow": 200000000,
+                },
+                {
                     "fy": 2024,
                     "revenue": 1250000000,
                     "revenue_growth": 0.25,
@@ -130,12 +138,87 @@ def test_generate_research_report_includes_metrics_table() -> None:
     )
 
     assert "| Fiscal Year | Revenue | Revenue Growth | Operating Margin | Net Margin | Free Cash Flow |" in report
-    assert "| 2024 | 1250000000 | 25.00% | 24.00% | 20.00% | 280000000 |" in report
+    assert "| 2023 | $1.00B | N/A | 20.0% | 15.0% | $200.0M |" in report
+    assert "| 2024 | $1.25B | 25.0% | 24.0% | 20.0% | $280.0M |" in report
     assert (
-        "For fiscal year 2024, extracted revenue was 1250000000, "
-        "net income was 250000000, and free cash flow was 280000000. "
+        "Source cue: financial metrics are derived from SEC company facts. "
         "[sec_company_facts]"
     ) in report
+    assert (
+        "For fiscal year 2024, extracted revenue was $1.25B, "
+        "net income was $250.0M, and free cash flow was $280.0M. "
+        "[sec_company_facts]"
+    ) in report
+    assert "Revenue increased 25.0% from fiscal year 2023 to 2024." in report
+    assert (
+        "Operating margin expanded by 4.0 percentage points from fiscal year "
+        "2023 to 2024."
+    ) in report
+
+
+def test_generate_research_report_uses_na_for_missing_financial_values() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={
+            "periods": [
+                {
+                    "fy": 2024,
+                    "revenue": 500000000,
+                    "net_income": None,
+                    "net_margin": None,
+                    "free_cash_flow": None,
+                }
+            ]
+        },
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+    )
+
+    financial_performance = _extract_section(report, "## 4. Financial Performance")
+    metrics_table = _extract_section(report, "## 5. Key Financial Metrics")
+
+    assert "net income was N/A" in financial_performance
+    assert "| 2024 | $500.0M | N/A | N/A | N/A | N/A |" in metrics_table
+
+
+def test_generate_research_report_financial_sections_hide_raw_large_integers() -> None:
+    report = generate_research_report(
+        company_name="Apple Inc.",
+        ticker="AAPL",
+        financial_metrics={
+            "periods": [
+                {
+                    "fy": 2023,
+                    "revenue": 1000000000,
+                    "free_cash_flow": 200000000,
+                },
+                {
+                    "fy": 2024,
+                    "revenue": 1250000000,
+                    "revenue_growth": 0.25,
+                    "net_income": 250000000,
+                    "free_cash_flow": 280000000,
+                },
+            ]
+        },
+        latest_10k=None,
+        latest_10q=None,
+        warnings=[],
+        sources=[],
+    )
+
+    financial_sections = (
+        _extract_section(report, "## 4. Financial Performance")
+        + _extract_section(report, "## 5. Key Financial Metrics")
+    )
+
+    assert "1250000000" not in financial_sections
+    assert "280000000" not in financial_sections
+    assert "$1.25B" in financial_sections
+    assert "$280.0M" in financial_sections
 
 
 def test_generate_research_report_includes_limitations_from_warnings() -> None:

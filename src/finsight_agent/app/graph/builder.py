@@ -52,6 +52,18 @@ LLM_SOURCE_GROUNDED_REPORT_FIELDS = (
     "bull_case",
     "bear_case",
 )
+RAW_FINANCIAL_PRESENTATION_FIELDS = (
+    "revenue",
+    "operating_income",
+    "net_income",
+    "assets",
+    "liabilities",
+    "cash",
+    "debt",
+    "operating_cash_flow",
+    "capital_expenditure",
+    "free_cash_flow",
+)
 
 
 def build_research_graph(
@@ -751,6 +763,7 @@ def _make_draft_report_node(llm_client: Any | None):
             draft = _validate_report_draft(
                 llm_client.draft_report(_report_evidence(state)),
                 known_source_ids=_known_source_ids(state),
+                financial_metrics=state.get("financial_metrics"),
             )
             completed_at = datetime.now(timezone.utc)
         except Exception as exc:
@@ -1305,6 +1318,7 @@ def _validate_report_draft(
     draft: Any,
     *,
     known_source_ids: set[str] | None = None,
+    financial_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(draft, dict):
         msg = "LLM report draft must return a dictionary."
@@ -1340,6 +1354,8 @@ def _validate_report_draft(
         raise ValueError(msg)
     if known_source_ids is not None:
         _validate_llm_draft_citations(sections, known_source_ids)
+    if financial_metrics is not None:
+        _validate_llm_financial_presentation(sections, financial_metrics)
 
     return {
         "sections": sections,
@@ -1398,6 +1414,56 @@ def _validate_llm_draft_citations(
             "source-grounded sections."
         )
         raise ValueError(msg)
+
+
+def _validate_llm_financial_presentation(
+    sections: dict[str, Any],
+    financial_metrics: dict[str, Any],
+) -> None:
+    financial_performance = sections.get("financial_performance")
+    if not isinstance(financial_performance, str):
+        return
+
+    raw_values = _raw_financial_metric_values(financial_metrics)
+    if any(
+        _contains_raw_metric_value(financial_performance, raw_value)
+        for raw_value in raw_values
+    ):
+        msg = "LLM report draft financial performance used unformatted raw metric values."
+        raise ValueError(msg)
+
+
+def _raw_financial_metric_values(financial_metrics: dict[str, Any]) -> set[str]:
+    periods = financial_metrics.get("periods", [])
+    if not isinstance(periods, list):
+        return set()
+
+    raw_values: set[str] = set()
+    for period in periods:
+        if not isinstance(period, dict):
+            continue
+        for field in RAW_FINANCIAL_PRESENTATION_FIELDS:
+            normalized_value = _raw_financial_metric_value(period.get(field))
+            if normalized_value is not None:
+                raw_values.add(normalized_value)
+    return raw_values
+
+
+def _raw_financial_metric_value(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+
+    integer_value = int(value)
+    if abs(integer_value) < 100_000:
+        return None
+    return str(integer_value)
+
+
+def _contains_raw_metric_value(text: str, raw_value: str) -> bool:
+    pattern = rf"(?<![\d.]){re.escape(raw_value)}(?![\d.])"
+    return re.search(pattern, text) is not None
 
 
 def _unknown_llm_draft_citations(

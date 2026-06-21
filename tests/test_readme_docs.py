@@ -221,6 +221,29 @@ def test_readme_documents_llm_provider_testing_workflow() -> None:
         assert phrase in live_section
 
 
+def test_readme_documents_financial_presentation_and_period_analysis() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "### Financial Presentation and Period Analysis" in readme
+    section = readme.split(
+        "### Financial Presentation and Period Analysis",
+        maxsplit=1,
+    )[1]
+
+    for phrase in [
+        "`$1.25B`",
+        "`$280.0M`",
+        "`25.0%`",
+        "`N/A`",
+        "raw numeric metric values remain internal",
+        "deterministic period comparisons",
+        "`[sec_company_facts]`",
+        "LLM report drafts that repeat raw metric values",
+        "deterministic fallback",
+    ]:
+        assert phrase in section
+
+
 def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
     docs = {
         "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
@@ -239,3 +262,22 @@ def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
         assert "end-to-end live run last" in text, path
         assert "report drafting" in text, path
         assert "4P-5" in text, path
+
+
+def test_agent_docs_document_stage_4q_financial_presentation_status() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4Q - Financial Presentation and Period Analysis" in text, path
+        assert "docs/specs/4Q-financial-presentation-period-analysis.md" in text, path
+        assert "financial_presentation" in text, path
+        assert "readable financial values" in text, path
+        assert "deterministic period comparisons" in text, path
+        assert "raw metric values" in text, path
+        assert "LLM report draft financial performance" in text, path
+        assert "4Q-5" in text, path

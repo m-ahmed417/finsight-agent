@@ -162,6 +162,25 @@ into the report. If Item 1 Business cannot be extracted, the limitation is surfa
 through warnings or limitations instead of replacing it with external company
 descriptions.
 
+### Financial Presentation and Period Analysis
+
+Financial metrics are still calculated deterministically from SEC company facts
+in Python. In final reports, FinSight presents those metrics with readable
+financial values such as `$1.25B`, `$280.0M`, and `N/A`; percentage metrics use
+readable output such as `25.0%`. The raw numeric metric values remain internal
+for calculations, persistence, API responses, and deterministic tests.
+
+The Financial Performance and Key Financial Metrics sections include
+deterministic period comparisons when enough fiscal-year data is available.
+Examples include revenue increases or decreases, margin movement in percentage
+points, and free cash flow changes. Financial claims continue to cite
+`[sec_company_facts]`, and missing values are shown as `N/A` or surfaced through
+warnings and limitations rather than invented.
+
+LLM report drafts that repeat raw metric values in financial performance text
+are rejected by graph validation and use deterministic fallback, so model
+drafting cannot bypass source-grounded financial presentation.
+
 Before persistence, the workflow runs deterministic compliance checks and then
 report quality validation. Completed runs expose `compliance_status` and
 `report_quality_status`; when enough SEC-derived evidence is available, normal
