@@ -244,6 +244,35 @@ def test_readme_documents_financial_presentation_and_period_analysis() -> None:
         assert phrase in section
 
 
+def test_readme_documents_filing_evidence_robustness() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "### Filing Evidence Robustness" in readme
+    section = readme.split("### Filing Evidence Robustness", maxsplit=1)[1]
+
+    for phrase in [
+        "deterministic filing extraction",
+        "Item 1 Business",
+        "Item 1A Risk Factors",
+        "heading variants",
+        "`PART I`",
+        "table-of-contents",
+        "non-breaking spaces",
+        "Item 1B",
+        "Item 2",
+        "extraction_diagnostics",
+        "candidate_count",
+        "selection_reason",
+        "warning_reason",
+        "business_section_unavailable",
+        "risk_factors_unavailable",
+        "warnings or limitations",
+        "`[latest_10k]`",
+        "not use LLMs",
+    ]:
+        assert phrase in section
+
+
 def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
     docs = {
         "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
@@ -281,3 +310,23 @@ def test_agent_docs_document_stage_4q_financial_presentation_status() -> None:
         assert "raw metric values" in text, path
         assert "LLM report draft financial performance" in text, path
         assert "4Q-5" in text, path
+
+
+def test_agent_docs_document_stage_4r_filing_robustness_status() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4R - Filing Evidence Robustness" in text, path
+        assert "docs/specs/4R-filing-evidence-robustness.md" in text, path
+        assert "deterministic filing extraction" in text, path
+        assert "heading variants" in text, path
+        assert "table-of-contents" in text, path
+        assert "extraction_diagnostics" in text, path
+        assert "business_section_unavailable" in text, path
+        assert "risk_factors_unavailable" in text, path
+        assert "4R-5" in text, path

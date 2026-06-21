@@ -162,6 +162,27 @@ into the report. If Item 1 Business cannot be extracted, the limitation is surfa
 through warnings or limitations instead of replacing it with external company
 descriptions.
 
+### Filing Evidence Robustness
+
+FinSight uses deterministic filing extraction for latest 10-K Item 1 Business
+and Item 1A Risk Factors evidence. The parser handles common heading variants
+from SEC filings, uppercase headings, punctuation variants, `PART I` labels, HTML tags,
+non-breaking spaces, and repeated table-of-contents entries.
+
+The parser selects plausible body sections and stops at the next appropriate
+boundary, including Item 1A Risk Factors, Item 1B, or Item 2. This keeps Item 1
+Business text from leaking into risk-factor output and keeps Item 1A Risk
+Factors text from leaking into Company Overview evidence. Missing, ambiguous, or
+implausibly short sections are not repaired with model output; the parser does
+not use LLMs for filing extraction.
+
+Graph state and source metadata include structured `extraction_diagnostics`
+such as `candidate_count`, `selection_reason`, `warning_reason`, and extracted
+text character counts. When extraction is unavailable, FinSight emits structured
+warnings such as `business_section_unavailable` or `risk_factors_unavailable`
+and surfaces the issue as warnings or limitations. Reports cite `[latest_10k]`
+only when latest 10-K business or risk evidence is actually used.
+
 ### Financial Presentation and Period Analysis
 
 Financial metrics are still calculated deterministically from SEC company facts
@@ -330,6 +351,8 @@ The research workflow records SEC diagnostics in the persisted `agent_steps`,
 - filing document plus extracted business and risk-factor text character counts
 - latest 10-K extracted sections such as Item 1 Business and Item 1A Risk
   Factors
+- filing extraction diagnostics such as `candidate_count`, `selection_reason`,
+  and `warning_reason`
 - metric fiscal years and XBRL tag counts used during deterministic extraction
 - SEC cache status for source fetches:
   - `cache_status` and `cache_key` on JSON sources such as `sec_submissions`

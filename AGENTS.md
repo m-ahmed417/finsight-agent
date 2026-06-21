@@ -51,12 +51,15 @@ Already implemented:
   period comparisons, `financial_presentation` helpers, formatted report
   financial sections, and LLM report draft financial performance guardrails
   that reject raw metric values.
+- Stage 4R filing evidence robustness: deterministic filing extraction for
+  heading variants, table-of-contents noise, boundary detection, extraction
+  diagnostics, and graph-level proof across fixture filing documents.
 - GitHub Actions CI for tests and linting.
 
 Current completed stage:
 
 ```text
-4Q - Financial Presentation and Period Analysis
+4R - Filing Evidence Robustness
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic business
@@ -80,6 +83,15 @@ values such as `$1.25B`, `$280.0M`, percentages such as `25.0%`, and `N/A` for
 missing data. LLM report draft financial performance text that repeats raw
 metric values is rejected and falls back to deterministic report generation.
 
+Stage 4R strengthened deterministic filing extraction for latest 10-K Item 1
+Business and Item 1A Risk Factors evidence. Use
+`docs/specs/4R-filing-evidence-robustness.md` as the stage spec. The parser
+handles heading variants, `PART I` labels, HTML/non-breaking-space input,
+table-of-contents noise, and Item 1A, Item 1B, and Item 2 boundaries. It records
+`extraction_diagnostics` and surfaces `business_section_unavailable` or
+`risk_factors_unavailable` warnings instead of inventing missing filing
+evidence.
+
 ## Development Method
 
 From 4N onward, use both spec-driven development and test-driven development.
@@ -100,6 +112,7 @@ docs/specs/4N-report-quality-grounding.md
 docs/specs/4O-business-overview-filing-evidence.md
 docs/specs/4P-llm-provider-integration-agent-testing.md
 docs/specs/4Q-financial-presentation-period-analysis.md
+docs/specs/4R-filing-evidence-robustness.md
 ```
 
 ## Core Rules
@@ -201,6 +214,7 @@ Reports must:
 - Use known `source_id` citations for source-grounded claims.
 - Use latest 10-K Item 1 Business evidence for Company Overview when available.
 - Cite `[latest_10k]` when Company Overview uses business-section evidence.
+- Preserve filing extraction diagnostics in graph state and source metadata.
 - Present financial metrics as readable financial values while keeping raw
   metric values internal.
 - Include deterministic period comparisons when enough fiscal-year data exists.
@@ -326,5 +340,22 @@ Stage 4Q was implemented in small, tested slices:
 5. `4Q-4`: Added graph proof and rejected LLM report draft financial
    performance text that repeats raw metric values.
 6. `4Q-5`: Updated docs and ran full verification.
+
+Stage 4R was implemented in small, tested slices:
+
+```text
+4R - Filing Evidence Robustness
+```
+
+1. `4R-0`: Wrote `docs/specs/4R-filing-evidence-robustness.md`.
+2. `4R-1`: Added fixture-backed parser tests for heading variants and
+   table-of-contents noise.
+3. `4R-2`: Hardened filing section boundaries so Item 1, Item 1A, Item 1B,
+   and Item 2 content does not leak across sections.
+4. `4R-3`: Added structured `extraction_diagnostics` and propagated them
+   through graph state, warnings, and latest 10-K source metadata.
+5. `4R-4`: Added graph proof across robust filing fixtures and missing
+   risk-factor extraction.
+6. `4R-5`: Updated README and agent docs, then ran full verification.
 
 When in doubt, keep the MVP small, traceable, source-grounded, and safe.

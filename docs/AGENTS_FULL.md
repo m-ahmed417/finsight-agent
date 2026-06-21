@@ -94,6 +94,9 @@ Implemented research workflow:
   period comparisons, `financial_presentation` helpers, formatted Financial
   Performance and Key Financial Metrics report sections, and LLM report draft
   financial performance validation that rejects raw metric values.
+- Stage 4R filing evidence robustness: deterministic filing extraction for
+  heading variants, table-of-contents noise, boundary detection, extraction
+  diagnostics, and graph-level proof across fixture filing documents.
 - LangGraph orchestration with typed state.
 - Structured warnings/errors instead of brittle crashes where graceful partial
   output is possible.
@@ -116,7 +119,7 @@ Implemented persistence and API capabilities:
 Current completed stage:
 
 ```text
-4Q - Financial Presentation and Period Analysis
+4R - Filing Evidence Robustness
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic Company
@@ -138,6 +141,15 @@ persistence, API payloads, and tests; report financial sections use formatted
 values such as `$1.25B`, `$280.0M`, percentages such as `25.0%`, and `N/A` for
 missing values. LLM report draft financial performance text that repeats raw
 metric values is rejected and falls back to deterministic report generation.
+
+Stage 4R strengthened deterministic filing extraction for latest 10-K Item 1
+Business and Item 1A Risk Factors evidence. Use
+`docs/specs/4R-filing-evidence-robustness.md` as the Stage 4R spec. The parser
+handles heading variants, `PART I` labels, HTML/non-breaking-space input,
+table-of-contents noise, and Item 1A, Item 1B, and Item 2 boundaries. It records
+`extraction_diagnostics` and surfaces `business_section_unavailable` or
+`risk_factors_unavailable` warnings instead of inventing missing filing
+evidence.
 
 ## Development Method
 
@@ -664,6 +676,8 @@ Required:
 - Citations must refer to known source IDs where source metadata is available.
 - Company Overview should use latest 10-K Item 1 Business evidence when
   available and cite `[latest_10k]`.
+- Filing extraction diagnostics should remain available in graph state,
+  warnings, and source metadata.
 - Financial sections should present readable financial values while raw metric
   values remain internal.
 - Financial sections should include deterministic period comparisons when
@@ -848,6 +862,10 @@ Do not require real model API access in normal unit tests or default CI.
 
 Stage 4Q is Financial Presentation and Period Analysis. It is implemented.
 
+```text
+4Q - Financial Presentation and Period Analysis
+```
+
 The stage spec is:
 
 ```text
@@ -874,6 +892,36 @@ Keep financial calculations deterministic. LLMs may draft report language only
 after validation; they must not calculate values, fill missing metrics, or
 bypass the readable financial presentation layer.
 
+## Stage 4R Status
+
+Stage 4R is Filing Evidence Robustness. It is implemented.
+
+The stage spec is:
+
+```text
+docs/specs/4R-filing-evidence-robustness.md
+```
+
+Implemented:
+
+- `4R-0`: Wrote the Stage 4R spec.
+- `4R-1`: Added fixture-backed parser tests for heading variants,
+  punctuation variants, `PART I` labels, HTML/non-breaking-space input, and
+  table-of-contents noise.
+- `4R-2`: Hardened boundary detection so Item 1 Business excludes Item 1A
+  Risk Factors and risk extraction stops before Item 1B, Item 2, or later
+  sections.
+- `4R-3`: Added structured `extraction_diagnostics` with candidate counts,
+  selection reasons, warning reasons, and graph/source propagation.
+- `4R-4`: Added graph proof across robust filing fixtures, table-of-contents
+  input, and missing risk-factor extraction.
+- `4R-5`: Updated README and agent docs, then ran full verification.
+
+Keep filing parsing deterministic. The parser should not use LLMs to identify,
+repair, or summarize missing filing sections. Missing or ambiguous evidence
+should become structured warnings or limitations, not invented business or risk
+content.
+
 ## Data Quality and Limitations
 
 SEC data is messy. Code defensively.
@@ -882,6 +930,8 @@ Use structured warnings for issues such as:
 
 - `metric_warning`
 - `filing_text_unavailable`
+- `business_section_unavailable`
+- `risk_factors_unavailable`
 - `risk_analysis_warning`
 - `sec_api_failure`
 - `llm_risk_analysis_unavailable`

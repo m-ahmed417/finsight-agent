@@ -76,6 +76,43 @@ class BusinessSectionMissingSECClient(FakeSECClient):
         )
 
 
+class FixtureFilingSECClient(FakeSECClient):
+    def __init__(
+        self,
+        *,
+        submissions: dict,
+        company_facts: dict,
+        fixture_name: str,
+    ) -> None:
+        super().__init__(submissions=submissions, company_facts=company_facts)
+        self.fixture_name = fixture_name
+
+    def fetch_filing_document(
+        self,
+        cik: str,
+        accession_number: str,
+        primary_document: str,
+    ) -> str:
+        return (FIXTURES_DIR / self.fixture_name).read_text()
+
+
+class RiskSectionMissingSECClient(FakeSECClient):
+    def fetch_filing_document(
+        self,
+        cik: str,
+        accession_number: str,
+        primary_document: str,
+    ) -> str:
+        return (
+            "PART I\n\n"
+            "Item 1. Business\n\n"
+            "The company provides regulated utility services to regional "
+            "customers through long-term operating assets.\n\n"
+            "Item 2. Properties\n\n"
+            "The company owns and leases property used for operations."
+        )
+
+
 class CacheMetadataSECClient(FakeSECClient):
     def fetch_company_submissions_with_metadata(self, cik: str) -> SimpleNamespace:
         return SimpleNamespace(
@@ -327,6 +364,14 @@ def source_by_type(sources: list[dict], source_type: str) -> dict:
     return next(source for source in sources if source["source_type"] == source_type)
 
 
+def latest_10k_source(sources: list[dict]) -> dict:
+    return next(
+        source
+        for source in sources
+        if source["source_type"] == "sec_filing" and source["form"] == "10-K"
+    )
+
+
 def extract_report_section(report: str, heading: str) -> str:
     start = report.find(heading)
     assert start != -1
@@ -512,6 +557,14 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "text": expected_risk_text,
     }
     assert risk_factor["text_character_count"] == len(expected_risk_text)
+    assert risk_factor["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1A Risk Factors",
+        "candidate_count": 1,
+        "text_character_count": len(expected_risk_text),
+        "selection_reason": "selected longest plausible body",
+        "warning_reason": None,
+    }
     assert datetime.fromisoformat(risk_factor["extracted_at"])
     expected_business_text = (
         "Apple Inc. designs, manufactures, and markets smartphones, personal computers,\n"
@@ -546,6 +599,14 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "text": expected_business_text,
     }
     assert business_section["text_character_count"] == len(expected_business_text)
+    assert business_section["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1 Business",
+        "candidate_count": 1,
+        "text_character_count": len(expected_business_text),
+        "selection_reason": "selected longest plausible body",
+        "warning_reason": None,
+    }
     assert datetime.fromisoformat(business_section["extracted_at"])
     assert result["business_overview"] == {
         "status": "available",
@@ -729,6 +790,22 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
         "extracted_sections": ["Item 1 Business", "Item 1A Risk Factors"],
     }
     assert filing_10k_source["document_character_count"] == len(result["filing_text"])
+    assert filing_10k_source["business_extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1 Business",
+        "candidate_count": 1,
+        "text_character_count": len(expected_business_text),
+        "selection_reason": "selected longest plausible body",
+        "warning_reason": None,
+    }
+    assert filing_10k_source["risk_factor_extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1A Risk Factors",
+        "candidate_count": 1,
+        "text_character_count": len(expected_risk_text),
+        "selection_reason": "selected longest plausible body",
+        "warning_reason": None,
+    }
     assert filing_10k_source["business_text_character_count"] == len(
         expected_business_text
     )
@@ -1088,6 +1165,14 @@ def test_research_graph_warns_when_business_section_is_missing() -> None:
             "accession_number": "0000320193-24-000123",
             "primary_document": "aapl-20240928.htm",
             "document_character_count": len(result["filing_text"]),
+            "extraction_diagnostics": {
+                "status": "unavailable",
+                "section": "Item 1 Business",
+                "candidate_count": 0,
+                "text_character_count": None,
+                "selection_reason": None,
+                "warning_reason": "No Item 1 Business heading candidates found.",
+            },
         },
     } in result["warnings"]
     filing_10k_source = next(
@@ -1097,6 +1182,17 @@ def test_research_graph_warns_when_business_section_is_missing() -> None:
     )
     assert filing_10k_source["extraction_status"] == "risk_factors_extracted"
     assert filing_10k_source["extracted_sections"] == ["Item 1A Risk Factors"]
+    assert filing_10k_source["business_extraction_diagnostics"] == {
+        "status": "unavailable",
+        "section": "Item 1 Business",
+        "candidate_count": 0,
+        "text_character_count": None,
+        "selection_reason": None,
+        "warning_reason": "No Item 1 Business heading candidates found.",
+    }
+    assert filing_10k_source["risk_factor_extraction_diagnostics"]["status"] == (
+        "extracted"
+    )
     assert "business_text_character_count" not in filing_10k_source
     assert_agent_step(
         result,
@@ -1109,6 +1205,218 @@ def test_research_graph_warns_when_business_section_is_missing() -> None:
         ),
     )
     assert result["errors"] == []
+
+
+def test_research_graph_extracts_heading_variant_filing_sections() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FixtureFilingSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+        fixture_name="filing_heading_variants_10k.txt",
+    )
+    graph = build_research_graph(resolver=resolver, sec_client=sec_client)
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["errors"] == []
+    assert result["compliance_status"] == "allowed"
+    assert result["report_quality_status"] == "passed"
+    assert result["final_report"] is not None
+    assert RESEARCH_ONLY_NOTICE in result["final_report"]
+
+    assert len(result["business_sections"]) == 1
+    business_section = result["business_sections"][0]
+    assert "compliance workflow software" in business_section["text"]
+    assert "implementation risk" not in business_section["text"].casefold()
+    assert business_section["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1 Business",
+        "candidate_count": 1,
+        "text_character_count": len(business_section["text"]),
+        "selection_reason": "selected plausible body after PART I heading",
+        "warning_reason": None,
+    }
+
+    assert len(result["risk_factors"]) == 1
+    risk_factor = result["risk_factors"][0]
+    assert "implementation risk" in risk_factor["text"]
+    assert "office space" not in risk_factor["text"].casefold()
+    assert risk_factor["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1A Risk Factors",
+        "candidate_count": 1,
+        "text_character_count": len(risk_factor["text"]),
+        "selection_reason": "selected plausible body after PART I heading",
+        "warning_reason": None,
+    }
+
+    filing_10k_source = latest_10k_source(result["sources"])
+    assert filing_10k_source["extraction_status"] == (
+        "business_and_risk_factors_extracted"
+    )
+    assert filing_10k_source["extracted_sections"] == [
+        "Item 1 Business",
+        "Item 1A Risk Factors",
+    ]
+    assert filing_10k_source["business_text_character_count"] == len(
+        business_section["text"]
+    )
+    assert filing_10k_source["risk_factor_text_character_count"] == len(
+        risk_factor["text"]
+    )
+
+    overview = extract_report_section(result["final_report"], "## 3. Company Overview")
+    assert "[latest_10k]" in overview
+    risk_section = extract_report_section(result["final_report"], "## 6. Risk Factors")
+    assert "[latest_10k]" in risk_section
+
+
+def test_research_graph_skips_table_of_contents_noise_in_filing_sections() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FixtureFilingSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+        fixture_name="filing_toc_noise_10k.html",
+    )
+    graph = build_research_graph(resolver=resolver, sec_client=sec_client)
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["errors"] == []
+    assert result["compliance_status"] == "allowed"
+    assert result["report_quality_status"] in {"passed", "warning"}
+    assert result["final_report"] is not None
+    assert RESEARCH_ONLY_NOTICE in result["final_report"]
+
+    assert len(result["business_sections"]) == 1
+    business_section = result["business_sections"][0]
+    assert "Actual Cloud Corp. delivers cloud infrastructure products" in (
+        business_section["text"]
+    )
+    assert "Table of Contents" not in business_section["text"]
+    assert business_section["text"] != "5"
+    assert business_section["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1 Business",
+        "candidate_count": 2,
+        "text_character_count": len(business_section["text"]),
+        "selection_reason": "selected plausible body after PART I heading",
+        "warning_reason": None,
+    }
+
+    assert len(result["risk_factors"]) == 1
+    risk_factor = result["risk_factors"][0]
+    assert "Actual risk text describes cybersecurity incidents" in risk_factor["text"]
+    assert "Table of Contents" not in risk_factor["text"]
+    assert risk_factor["text"] != "14"
+    assert risk_factor["extraction_diagnostics"] == {
+        "status": "extracted",
+        "section": "Item 1A Risk Factors",
+        "candidate_count": 2,
+        "text_character_count": len(risk_factor["text"]),
+        "selection_reason": "selected plausible body after PART I heading",
+        "warning_reason": None,
+    }
+
+    filing_10k_source = latest_10k_source(result["sources"])
+    assert filing_10k_source["extraction_status"] == (
+        "business_and_risk_factors_extracted"
+    )
+    assert filing_10k_source["extracted_sections"] == [
+        "Item 1 Business",
+        "Item 1A Risk Factors",
+    ]
+    assert filing_10k_source["business_extraction_diagnostics"] == (
+        business_section["extraction_diagnostics"]
+    )
+    assert filing_10k_source["risk_factor_extraction_diagnostics"] == (
+        risk_factor["extraction_diagnostics"]
+    )
+
+
+def test_research_graph_warns_when_risk_factor_section_is_missing() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = RiskSectionMissingSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(resolver=resolver, sec_client=sec_client)
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["errors"] == []
+    assert result["compliance_status"] == "allowed"
+    assert result["final_report"] is not None
+    assert RESEARCH_ONLY_NOTICE in result["final_report"]
+    assert len(result["business_sections"]) == 1
+    assert result["risk_factors"] == []
+    assert result["risk_themes"] == []
+    assert {
+        "code": "risk_factors_unavailable",
+        "message": "Item 1A risk-factor section could not be extracted.",
+        "severity": "warning",
+        "details": {
+            "source_id": "latest_10k",
+            "accession_number": "0000320193-24-000123",
+            "primary_document": "aapl-20240928.htm",
+            "document_character_count": len(result["filing_text"]),
+            "extraction_diagnostics": {
+                "status": "unavailable",
+                "section": "Item 1A Risk Factors",
+                "candidate_count": 0,
+                "text_character_count": None,
+                "selection_reason": None,
+                "warning_reason": "No Item 1A Risk Factors heading candidates found.",
+            },
+        },
+    } in result["warnings"]
+    assert any(
+        warning["code"] == "risk_analysis_unavailable"
+        for warning in result["warnings"]
+    )
+
+    filing_10k_source = latest_10k_source(result["sources"])
+    assert filing_10k_source["extraction_status"] == "business_extracted"
+    assert filing_10k_source["extracted_sections"] == ["Item 1 Business"]
+    assert filing_10k_source["business_extraction_diagnostics"]["status"] == (
+        "extracted"
+    )
+    assert filing_10k_source["risk_factor_extraction_diagnostics"] == {
+        "status": "unavailable",
+        "section": "Item 1A Risk Factors",
+        "candidate_count": 0,
+        "text_character_count": None,
+        "selection_reason": None,
+        "warning_reason": "No Item 1A Risk Factors heading candidates found.",
+    }
+    assert "risk_factor_text_character_count" not in filing_10k_source
+
+    risk_section = extract_report_section(result["final_report"], "## 6. Risk Factors")
+    assert "Risk-factor text was not available in this run" in risk_section
+    limitations = extract_report_section(result["final_report"], "## 11. Limitations")
+    assert "Item 1A risk-factor section could not be extracted." in limitations
+    assert_agent_step(
+        result,
+        node_name="fetch_filing_text",
+        status="completed",
+        message=(
+            "Retrieved latest 10-K business text; risk-factor section unavailable; "
+            f"document characters: {len(result['filing_text'])}, "
+            f"business characters: {len(result['business_sections'][0]['text'])}."
+        ),
+    )
 
 
 def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:

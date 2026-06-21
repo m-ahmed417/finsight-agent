@@ -15,8 +15,8 @@ from finsight_agent.app.services.compliance import (
     rewrite_unsafe_report,
 )
 from finsight_agent.app.services.filing_parser import (
-    extract_business_section,
-    extract_risk_factors_section,
+    extract_business_section_with_diagnostics,
+    extract_risk_factors_section_with_diagnostics,
     find_latest_filing,
     normalize_accession_number,
 )
@@ -512,13 +512,17 @@ def _make_fetch_filing_text_node(sec_client: Any):
             primary_document=primary_document,
         )
         document_retrieved_at = _utc_timestamp()
-        business_section = extract_business_section(filing_text)
-        risk_section = extract_risk_factors_section(filing_text)
+        business_extraction = extract_business_section_with_diagnostics(filing_text)
+        risk_extraction = extract_risk_factors_section_with_diagnostics(filing_text)
+        business_section = business_extraction.section
+        risk_section = risk_extraction.section
         warnings = [
             *state.get("warnings", []),
             *_filing_section_warnings(
                 business_section=business_section,
                 risk_section=risk_section,
+                business_diagnostics=business_extraction.diagnostics.model_dump(),
+                risk_diagnostics=risk_extraction.diagnostics.model_dump(),
                 accession_number=accession_number,
                 primary_document=primary_document,
                 document_character_count=len(filing_text),
@@ -546,6 +550,8 @@ def _make_fetch_filing_text_node(sec_client: Any):
                 _filing_source_extraction_updates(
                     business_section=business_section,
                     risk_section=risk_section,
+                    business_diagnostics=business_extraction.diagnostics.model_dump(),
+                    risk_diagnostics=risk_extraction.diagnostics.model_dump(),
                     document_retrieved_at=document_retrieved_at,
                     document_character_count=len(filing_text),
                     document_metadata=document_metadata,
@@ -1645,6 +1651,7 @@ def _business_section_records(
             "section_label": "Business",
             "extracted_at": extracted_at,
             "text_character_count": len(section.text),
+            "extraction_diagnostics": section.extraction_diagnostics,
             "text": section.text,
         }
     ]
@@ -1674,6 +1681,7 @@ def _risk_factor_records(
             "section_label": "Risk Factors",
             "extracted_at": extracted_at,
             "text_character_count": len(section.text),
+            "extraction_diagnostics": section.extraction_diagnostics,
             "text": section.text,
         }
     ]
@@ -1683,6 +1691,8 @@ def _filing_section_warnings(
     *,
     business_section: Any | None,
     risk_section: Any | None,
+    business_diagnostics: dict[str, Any],
+    risk_diagnostics: dict[str, Any],
     accession_number: str,
     primary_document: str,
     document_character_count: int,
@@ -1700,7 +1710,10 @@ def _filing_section_warnings(
                 "code": "business_section_unavailable",
                 "message": "Item 1 business section could not be extracted.",
                 "severity": "warning",
-                "details": warning_details,
+                "details": {
+                    **warning_details,
+                    "extraction_diagnostics": business_diagnostics,
+                },
             }
         )
     if risk_section is None:
@@ -1709,7 +1722,10 @@ def _filing_section_warnings(
                 "code": "risk_factors_unavailable",
                 "message": "Item 1A risk-factor section could not be extracted.",
                 "severity": "warning",
-                "details": warning_details,
+                "details": {
+                    **warning_details,
+                    "extraction_diagnostics": risk_diagnostics,
+                },
             }
         )
     return warnings
@@ -1719,6 +1735,8 @@ def _filing_source_extraction_updates(
     *,
     business_section: Any | None,
     risk_section: Any | None,
+    business_diagnostics: dict[str, Any],
+    risk_diagnostics: dict[str, Any],
     document_retrieved_at: str,
     document_character_count: int,
     document_metadata: dict[str, Any],
@@ -1734,6 +1752,8 @@ def _filing_source_extraction_updates(
             business_section,
             risk_section,
         ),
+        "business_extraction_diagnostics": business_diagnostics,
+        "risk_factor_extraction_diagnostics": risk_diagnostics,
         **_document_cache_source_fields(document_metadata),
     }
     if business_section is not None:
