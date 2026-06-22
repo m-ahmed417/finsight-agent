@@ -47,6 +47,7 @@ def _ensure_sqlite_research_run_columns() -> None:
     column_definitions = {
         "compliance_status": "VARCHAR(30)",
         "report_quality_status": "VARCHAR(30)",
+        "report_quality_details_json": "JSON",
         "retried_from_run_id": "VARCHAR(36)",
         "filing_text_excerpt": "TEXT",
         "risk_factors_json": "JSON NOT NULL DEFAULT '[]'",

@@ -273,6 +273,34 @@ def test_readme_documents_filing_evidence_robustness() -> None:
         assert phrase in section
 
 
+def test_readme_documents_report_citation_audit_and_quality_details() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "### Report Citation Audit and Quality Details" in readme
+    section = readme.split(
+        "### Report Citation Audit and Quality Details",
+        maxsplit=1,
+    )[1]
+
+    for phrase in [
+        "deterministic citation audit",
+        "report_quality_details",
+        "citation_audit",
+        "known_source_ids",
+        "unknown_citations",
+        "sections_missing_required_citations",
+        "missing_required_sections",
+        "section-level",
+        "`[sec_company_facts]`",
+        "`[latest_10k]`",
+        "LLM report drafts",
+        "missing or unknown citations",
+        "deterministic fallback",
+        "not use LLMs",
+    ]:
+        assert phrase in section
+
+
 def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
     docs = {
         "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
@@ -330,3 +358,23 @@ def test_agent_docs_document_stage_4r_filing_robustness_status() -> None:
         assert "business_section_unavailable" in text, path
         assert "risk_factors_unavailable" in text, path
         assert "4R-5" in text, path
+
+
+def test_agent_docs_document_stage_4s_citation_audit_status() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4S - Report Citation Audit and Quality Details" in text, path
+        assert "docs/specs/4S-report-citation-audit-quality-details.md" in text, path
+        assert "report_quality_details" in text, path
+        assert "citation_audit" in text, path
+        assert "known_source_ids" in text, path
+        assert "unknown_citations" in text, path
+        assert "sections_missing_required_citations" in text, path
+        assert "LLM report draft" in text, path
+        assert "4S-5" in text, path

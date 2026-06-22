@@ -49,6 +49,7 @@ def test_initial_migration_creates_research_tables(tmp_path) -> None:
         "retried_from_run_id",
         "compliance_status",
         "report_quality_status",
+        "report_quality_details_json",
         "final_report",
         "financial_metrics_json",
         "filing_text_excerpt",

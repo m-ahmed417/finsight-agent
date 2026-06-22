@@ -341,6 +341,7 @@ def _apply_graph_result_to_run(
     run.company_name = graph_result.get("company_name")
     run.compliance_status = graph_result.get("compliance_status")
     run.report_quality_status = graph_result.get("report_quality_status")
+    run.report_quality_details_json = graph_result.get("report_quality_details")
     run.final_report = graph_result.get("final_report")
     run.financial_metrics_json = graph_result.get("financial_metrics")
     run.filing_text_excerpt = _filing_text_excerpt(graph_result.get("filing_text"))

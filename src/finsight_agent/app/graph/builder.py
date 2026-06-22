@@ -169,6 +169,7 @@ def _initialize_state(state: FinSightState) -> FinSightState:
         "final_report": state.get("final_report"),
         "compliance_status": state.get("compliance_status"),
         "report_quality_status": state.get("report_quality_status"),
+        "report_quality_details": state.get("report_quality_details"),
         "agent_steps": state.get("agent_steps", []),
         "llm_call_events": state.get("llm_call_events", []),
         "sources": state.get("sources", []),
@@ -970,6 +971,7 @@ def _validate_report(state: FinSightState) -> FinSightState:
     )
     return {
         "report_quality_status": result.status.value,
+        "report_quality_details": result.details,
         "warnings": warnings,
         "agent_steps": _append_step(
             state,

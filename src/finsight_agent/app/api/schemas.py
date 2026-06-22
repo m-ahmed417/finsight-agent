@@ -418,6 +418,13 @@ class ResearchResponse(BaseModel):
     company_name: str | None = None
     compliance_status: str | None = None
     report_quality_status: str | None = None
+    report_quality_details: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Structured report quality details, including the section-level "
+            "citation audit when report quality validation has run."
+        ),
+    )
     report: str | None = None
     financial_metrics: dict[str, Any] | None = None
     filing_text_excerpt: str | None = None

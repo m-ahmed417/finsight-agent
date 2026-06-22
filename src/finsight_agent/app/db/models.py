@@ -23,6 +23,10 @@ class ResearchRun(Base):
     retried_from_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     compliance_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     report_quality_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    report_quality_details_json: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
     final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
     financial_metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     filing_text_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -283,6 +283,7 @@ def _make_run(
         company_name=result.get("company_name"),
         compliance_status=result.get("compliance_status"),
         report_quality_status=result.get("report_quality_status"),
+        report_quality_details_json=result.get("report_quality_details"),
         final_report=result.get("final_report"),
         financial_metrics_json=result.get("financial_metrics"),
         filing_text_excerpt=(
@@ -596,6 +597,13 @@ def test_post_research_background_job_can_complete_run(
         "company_name": "Apple Inc.",
         "compliance_status": "allowed",
         "report_quality_status": "passed",
+        "report_quality_details": {
+            "citation_audit": {
+                "status": "passed",
+                "known_source_ids": ["sec_company_facts"],
+                "unknown_citations": [],
+            }
+        },
         "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
         "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
         "filing_text": "Risk factor text from latest 10-K.",
@@ -642,6 +650,13 @@ def test_post_research_background_job_can_complete_run(
     assert body["company_name"] == "Apple Inc."
     assert body["compliance_status"] == "allowed"
     assert body["report_quality_status"] == "passed"
+    assert body["report_quality_details"] == {
+        "citation_audit": {
+            "status": "passed",
+            "known_source_ids": ["sec_company_facts"],
+            "unknown_citations": [],
+        }
+    }
     assert body["financial_metrics"]["periods"][0]["revenue"] == 1250000000
     assert body["filing_text_excerpt"] == "Risk factor text from latest 10-K."
     assert body["risk_factors"] == [{"form": "10-K", "text": "Risk factor text."}]
@@ -871,6 +886,13 @@ def test_get_research_preserves_typed_output_metadata_from_stored_run(
         "company_name": "Apple Inc.",
         "compliance_status": "allowed",
         "report_quality_status": "warning",
+        "report_quality_details": {
+            "citation_audit": {
+                "status": "warning",
+                "known_source_ids": ["latest_10k"],
+                "unknown_citations": ["unknown_source"],
+            }
+        },
         "final_report": "# FinSight Research Brief: Apple Inc. (AAPL)",
         "financial_metrics": {"periods": []},
         "warnings": [
@@ -931,6 +953,13 @@ def test_get_research_preserves_typed_output_metadata_from_stored_run(
             "source_id": "latest_10k",
         }
     ]
+    assert body["report_quality_details"] == {
+        "citation_audit": {
+            "status": "warning",
+            "known_source_ids": ["latest_10k"],
+            "unknown_citations": ["unknown_source"],
+        }
+    }
     assert body["errors"] == []
     assert len(body["sources"]) == 1
     source = body["sources"][0]
@@ -1459,6 +1488,9 @@ def test_research_openapi_uses_typed_output_schemas(client: TestClient) -> None:
     assert_openapi_uuid_property(research_properties["retried_from_run_id"])
     assert "retry" in research_properties["retried_from_run_id"]["description"].lower()
     assert "polling" in research_properties["status"]["description"].lower()
+    assert "citation audit" in research_properties["report_quality_details"][
+        "description"
+    ].lower()
     assert research_properties["warnings"]["items"]["$ref"] == (
         "#/components/schemas/ResearchWarning"
     )

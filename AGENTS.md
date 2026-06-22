@@ -54,12 +54,16 @@ Already implemented:
 - Stage 4R filing evidence robustness: deterministic filing extraction for
   heading variants, table-of-contents noise, boundary detection, extraction
   diagnostics, and graph-level proof across fixture filing documents.
+- Stage 4S report citation audit: deterministic `citation_audit` details in
+  `report_quality_details`, known and unknown citation tracking, missing
+  required citation details, persisted/API quality details, and LLM report draft
+  citation safety proof.
 - GitHub Actions CI for tests and linting.
 
 Current completed stage:
 
 ```text
-4R - Filing Evidence Robustness
+4S - Report Citation Audit and Quality Details
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic business
@@ -92,6 +96,14 @@ table-of-contents noise, and Item 1A, Item 1B, and Item 2 boundaries. It records
 `risk_factors_unavailable` warnings instead of inventing missing filing
 evidence.
 
+Stage 4S added deterministic report citation audit and quality details. Use
+`docs/specs/4S-report-citation-audit-quality-details.md` as the stage spec.
+Completed graph/API results now expose `report_quality_details` with a
+`citation_audit` object containing `known_source_ids`, `unknown_citations`,
+`sections_missing_required_citations`, and missing section details. LLM report
+draft citation failures use deterministic fallback instead of passing through
+as grounded report text.
+
 ## Development Method
 
 From 4N onward, use both spec-driven development and test-driven development.
@@ -113,6 +125,7 @@ docs/specs/4O-business-overview-filing-evidence.md
 docs/specs/4P-llm-provider-integration-agent-testing.md
 docs/specs/4Q-financial-presentation-period-analysis.md
 docs/specs/4R-filing-evidence-robustness.md
+docs/specs/4S-report-citation-audit-quality-details.md
 ```
 
 ## Core Rules
@@ -215,6 +228,8 @@ Reports must:
 - Use latest 10-K Item 1 Business evidence for Company Overview when available.
 - Cite `[latest_10k]` when Company Overview uses business-section evidence.
 - Preserve filing extraction diagnostics in graph state and source metadata.
+- Preserve `report_quality_details` and `citation_audit` details for completed
+  report quality validation.
 - Present financial metrics as readable financial values while keeping raw
   metric values internal.
 - Include deterministic period comparisons when enough fiscal-year data exists.
@@ -357,5 +372,20 @@ Stage 4R was implemented in small, tested slices:
 5. `4R-4`: Added graph proof across robust filing fixtures and missing
    risk-factor extraction.
 6. `4R-5`: Updated README and agent docs, then ran full verification.
+
+Stage 4S was implemented in small, tested slices:
+
+```text
+4S - Report Citation Audit and Quality Details
+```
+
+1. `4S-0`: Wrote `docs/specs/4S-report-citation-audit-quality-details.md`.
+2. `4S-1`: Added the deterministic citation audit service.
+3. `4S-2`: Integrated citation audit details into report quality validation.
+4. `4S-3`: Propagated `report_quality_details` through graph state, API
+   responses, persistence, and migration coverage.
+5. `4S-4`: Added graph proof that LLM report draft missing or unknown citation
+   failures use deterministic fallback.
+6. `4S-5`: Updated README and agent docs, then ran full verification.
 
 When in doubt, keep the MVP small, traceable, source-grounded, and safe.

@@ -49,6 +49,13 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
             "company_name": "Apple Inc.",
             "compliance_status": "allowed",
             "report_quality_status": "passed",
+            "report_quality_details": {
+                "citation_audit": {
+                    "status": "passed",
+                    "known_source_ids": ["sec_company_facts"],
+                    "unknown_citations": [],
+                }
+            },
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "filing_text": "Risk factor text " * 300,
             "risk_factors": [
@@ -139,6 +146,13 @@ def test_repository_creates_and_retrieves_research_run(tmp_path) -> None:
     assert retrieved.company_name == "Apple Inc."
     assert retrieved.compliance_status == "allowed"
     assert retrieved.report_quality_status == "passed"
+    assert retrieved.report_quality_details_json == {
+        "citation_audit": {
+            "status": "passed",
+            "known_source_ids": ["sec_company_facts"],
+            "unknown_citations": [],
+        }
+    }
     assert retrieved.financial_metrics_json == {
         "periods": [{"fy": 2024, "revenue": 1250000000}]
     }
@@ -371,6 +385,13 @@ def test_repository_marks_existing_research_run_completed_from_graph_result(
             "company_name": "Apple Inc.",
             "compliance_status": "allowed",
             "report_quality_status": "passed",
+            "report_quality_details": {
+                "citation_audit": {
+                    "status": "passed",
+                    "known_source_ids": ["sec_company_facts"],
+                    "unknown_citations": [],
+                }
+            },
             "financial_metrics": {"periods": [{"fy": 2024, "revenue": 1250000000}]},
             "filing_text": "Risk factor text " * 300,
             "risk_factors": [
@@ -431,6 +452,13 @@ def test_repository_marks_existing_research_run_completed_from_graph_result(
     assert retrieved.company_name == "Apple Inc."
     assert retrieved.compliance_status == "allowed"
     assert retrieved.report_quality_status == "passed"
+    assert retrieved.report_quality_details_json == {
+        "citation_audit": {
+            "status": "passed",
+            "known_source_ids": ["sec_company_facts"],
+            "unknown_citations": [],
+        }
+    }
     assert retrieved.final_report == "# FinSight Research Brief: Apple Inc. (AAPL)"
     assert retrieved.financial_metrics_json == {
         "periods": [{"fy": 2024, "revenue": 1250000000}]

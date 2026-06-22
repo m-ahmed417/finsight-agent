@@ -305,6 +305,31 @@ def test_research_response_accepts_known_lifecycle_statuses(status: str) -> None
     assert response.status == status
 
 
+def test_research_response_exposes_report_quality_details() -> None:
+    response = ResearchResponse.model_validate(
+        {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "status": "completed",
+            "report_quality_status": "passed",
+            "report_quality_details": {
+                "citation_audit": {
+                    "status": "passed",
+                    "known_source_ids": ["sec_company_facts"],
+                    "unknown_citations": [],
+                }
+            },
+        }
+    )
+
+    assert response.report_quality_details == {
+        "citation_audit": {
+            "status": "passed",
+            "known_source_ids": ["sec_company_facts"],
+            "unknown_citations": [],
+        }
+    }
+
+
 def test_research_response_exposes_lifecycle_timestamps() -> None:
     created_at = datetime(2026, 6, 16, 13, 0, tzinfo=timezone.utc)
     completed_at = datetime(2026, 6, 16, 13, 2, 30, tzinfo=timezone.utc)

@@ -27,6 +27,7 @@ class FinSightState(TypedDict, total=False):
     final_report: str | None
     compliance_status: str | None
     report_quality_status: str | None
+    report_quality_details: dict[str, Any] | None
 
     agent_steps: list[dict[str, Any]]
     llm_call_events: list[dict[str, Any]]

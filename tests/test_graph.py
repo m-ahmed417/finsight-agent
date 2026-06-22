@@ -283,6 +283,23 @@ class CitationlessReportDraftLLMClient(FakeLLMClient):
         }
 
 
+class MissingRiskCitationReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": ["LLM-written graph summary."],
+                "financial_performance": (
+                    "LLM-written graph financial performance. [sec_company_facts]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor without citation."],
+                "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
 class UnknownCitationReportDraftLLMClient(FakeLLMClient):
     def draft_report(self, evidence: dict) -> dict:
         return {
@@ -291,6 +308,26 @@ class UnknownCitationReportDraftLLMClient(FakeLLMClient):
                 "financial_performance": (
                     "LLM-written graph financial performance. "
                     "[sec_company_facts] [made_up_source]"
+                ),
+                "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
+                "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
+                "bear_case": ["LLM-written graph bear case. [latest_10k]"],
+                "open_questions": ["LLM-written graph open question."],
+            },
+            "warnings": [],
+        }
+
+
+class OptionalUnknownCitationReportDraftLLMClient(FakeLLMClient):
+    def draft_report(self, evidence: dict) -> dict:
+        return {
+            "sections": {
+                "executive_summary": [
+                    "LLM-written graph summary with optional unknown citation. "
+                    "[made_up_source]"
+                ],
+                "financial_performance": (
+                    "LLM-written graph financial performance. [sec_company_facts]"
                 ),
                 "risk_factors": ["LLM-written graph risk factor. [latest_10k]"],
                 "bull_case": ["LLM-written graph bull case. [sec_company_facts]"],
@@ -862,6 +899,33 @@ def test_research_graph_successful_run_resolves_fetches_filings_and_metrics() ->
     assert "extracted sections: Item 1 Business, Item 1A Risk Factors" in sources_section
     assert result["compliance_status"] == "allowed"
     assert result["report_quality_status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"]["status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"]["known_source_ids"] == [
+        "sec_submissions",
+        "sec_company_facts",
+        "latest_10k",
+        "latest_10q",
+    ]
+    assert result["report_quality_details"]["citation_audit"][
+        "sections_missing_required_citations"
+    ] == []
+    assert result["report_quality_details"]["citation_audit"][
+        "unknown_citations"
+    ] == []
+    financial_audit = next(
+        section
+        for section in result["report_quality_details"]["citation_audit"]["sections"]
+        if section["heading"] == "## 4. Financial Performance"
+    )
+    assert financial_audit["citations"] == ["sec_company_facts"]
+    assert financial_audit["known_citations"] == ["sec_company_facts"]
+    risk_audit = next(
+        section
+        for section in result["report_quality_details"]["citation_audit"]["sections"]
+        if section["heading"] == "## 6. Risk Factors"
+    )
+    assert risk_audit["citations"] == ["latest_10k"]
+    assert risk_audit["known_citations"] == ["latest_10k"]
     assert not any(
         marker in result["final_report"].casefold()
         for marker in SCAFFOLD_REPORT_MARKERS
@@ -1478,6 +1542,18 @@ def test_research_graph_can_use_injected_llm_client_for_risk_themes() -> None:
         "LLM-written graph summary."
     ]
     assert "LLM-written graph bull case." in result["final_report"]
+    assert result["report_quality_status"] == "passed"
+    citation_audit = result["report_quality_details"]["citation_audit"]
+    assert citation_audit["status"] == "passed"
+    assert citation_audit["unknown_citations"] == []
+    assert citation_audit["sections_missing_required_citations"] == []
+    llm_bull_audit = next(
+        section
+        for section in citation_audit["sections"]
+        if section["heading"] == "## 7. Bull Case"
+    )
+    assert llm_bull_audit["citations"] == ["sec_company_facts"]
+    assert llm_bull_audit["known_citations"] == ["sec_company_facts"]
     draft_step = assert_agent_step(
         result,
         node_name="draft_report",
@@ -1733,6 +1809,68 @@ def test_research_graph_falls_back_when_llm_report_draft_lacks_citations() -> No
         "LLM report draft must include known source_id citations in "
         "source-grounded sections."
     )
+    assert result["report_quality_details"]["citation_audit"]["status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"][
+        "sections_missing_required_citations"
+    ] == []
+
+
+def test_research_graph_falls_back_when_llm_report_draft_misses_one_required_citation() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=MissingRiskCitationReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["llm_report_sections"] is None
+    assert "LLM-written graph risk factor without citation." not in result["final_report"]
+    assert "[sec_company_facts]" in result["final_report"]
+    assert "[latest_10k]" in result["final_report"]
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": (
+            "LLM report draft must include known source_id citations in "
+            "source-grounded sections."
+        ),
+        "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
+    } in result["warnings"]
+    draft_step = assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
+    )
+    assert draft_step["llm_used"] is False
+    assert draft_step["llm_fallback_reason"] == (
+        "LLM report draft must include known source_id citations in "
+        "source-grounded sections."
+    )
+    draft_call = next(
+        event
+        for event in result["llm_call_events"]
+        if event["node_name"] == "draft_report"
+    )
+    assert draft_call["status"] == "failed"
+    assert draft_call["fallback_used"] is True
+    assert draft_call["error_type"] == "ValueError"
+    assert result["report_quality_status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"]["status"] == "passed"
 
 
 def test_research_graph_falls_back_when_llm_report_draft_uses_unknown_citation() -> None:
@@ -1777,6 +1915,52 @@ def test_research_graph_falls_back_when_llm_report_draft_uses_unknown_citation()
         "LLM report draft cited unknown source_id: made_up_source."
     )
     assert result["report_quality_status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"]["unknown_citations"] == []
+
+
+def test_research_graph_falls_back_when_llm_report_draft_uses_unknown_optional_citation() -> None:
+    resolver = CompanyResolver(
+        companies=[
+            CompanyRecord(ticker="AAPL", company_name="Apple Inc.", cik="320193"),
+        ]
+    )
+    sec_client = FakeSECClient(
+        submissions=load_fixture("sample_submissions.json"),
+        company_facts=load_fixture("sample_company_facts.json"),
+    )
+    graph = build_research_graph(
+        resolver=resolver,
+        sec_client=sec_client,
+        llm_client=OptionalUnknownCitationReportDraftLLMClient(),
+    )
+
+    result = graph.invoke({"user_query": "AAPL"})
+
+    assert result["llm_report_sections"] is None
+    assert "optional unknown citation" not in result["final_report"]
+    assert "[made_up_source]" not in result["final_report"]
+    assert {
+        "code": "llm_report_drafting_unavailable",
+        "message": "LLM report draft cited unknown source_id: made_up_source.",
+        "severity": "warning",
+        "details": {
+            "llm_provider": "fake",
+            "llm_model": "fake-model",
+            "fallback": "deterministic_report_generator",
+        },
+    } in result["warnings"]
+    draft_step = assert_agent_step(
+        result,
+        node_name="draft_report",
+        status="completed",
+        message="Using deterministic report generator after LLM report drafting failed.",
+    )
+    assert draft_step["llm_used"] is False
+    assert draft_step["llm_fallback_reason"] == (
+        "LLM report draft cited unknown source_id: made_up_source."
+    )
+    assert result["report_quality_status"] == "passed"
+    assert result["report_quality_details"]["citation_audit"]["unknown_citations"] == []
 
 
 def test_research_graph_falls_back_when_llm_report_draft_uses_raw_financial_values() -> None:

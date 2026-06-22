@@ -162,6 +162,25 @@ into the report. If Item 1 Business cannot be extracted, the limitation is surfa
 through warnings or limitations instead of replacing it with external company
 descriptions.
 
+### Report Citation Audit and Quality Details
+
+FinSight runs a deterministic citation audit as part of report quality
+validation. Completed research responses include `report_quality_details` with a
+`citation_audit` object so clients can inspect section-level source grounding
+without parsing the report text themselves.
+
+The citation audit records `known_source_ids`, `unknown_citations`,
+`sections_missing_required_citations`, and `missing_required_sections`. It
+checks report citations such as `[sec_company_facts]` and `[latest_10k]` against
+the run's recorded source metadata, preserves report section order, and reports
+missing or unknown citations as structured quality details. The audit does not
+use LLMs to judge, repair, or invent citations.
+
+LLM report drafts are also checked before they can influence the final report.
+Drafts with missing or unknown citations in source-grounded sections use
+deterministic fallback, preserving the research-only report generator and
+preventing unsupported source IDs from appearing in final output.
+
 ### Filing Evidence Robustness
 
 FinSight uses deterministic filing extraction for latest 10-K Item 1 Business

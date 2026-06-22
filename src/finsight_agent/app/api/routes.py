@@ -292,6 +292,7 @@ def _research_run_to_response(run: ResearchRun) -> ResearchResponse:
         company_name=run.company_name,
         compliance_status=run.compliance_status,
         report_quality_status=run.report_quality_status,
+        report_quality_details=run.report_quality_details_json,
         report=run.final_report,
         financial_metrics=run.financial_metrics_json,
         filing_text_excerpt=run.filing_text_excerpt,

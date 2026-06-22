@@ -38,6 +38,27 @@ def test_valid_report_quality_passes_without_warnings() -> None:
 
     assert result.status == ReportQualityStatus.PASSED
     assert result.warnings == []
+    citation_audit = result.details["citation_audit"]
+    assert citation_audit["status"] == "passed"
+    assert citation_audit["known_source_ids"] == [
+        "sec_company_facts",
+        "latest_10k",
+    ]
+    assert citation_audit["missing_required_sections"] == []
+    assert citation_audit["sections_missing_required_citations"] == []
+    assert citation_audit["unknown_citations"] == []
+    assert _audit_section(
+        citation_audit,
+        "## 4. Financial Performance",
+    ) == {
+        "heading": "## 4. Financial Performance",
+        "present": True,
+        "requires_citation": True,
+        "citations": ["sec_company_facts"],
+        "known_citations": ["sec_company_facts"],
+        "unknown_citations": [],
+        "missing_required_citation": False,
+    }
 
 
 def test_missing_required_section_returns_warning() -> None:
@@ -54,6 +75,9 @@ def test_missing_required_section_returns_warning() -> None:
         "message": "Report is missing required section: ## 8. Bear Case.",
         "severity": "warning",
     } in result.warnings
+    citation_audit = result.details["citation_audit"]
+    assert citation_audit["missing_required_sections"] == ["## 8. Bear Case"]
+    assert _audit_section(citation_audit, "## 8. Bear Case")["present"] is False
 
 
 def test_missing_disclaimer_returns_warning() -> None:
@@ -94,6 +118,12 @@ def test_unknown_report_citation_returns_warning() -> None:
         "message": "Report cites unknown source_id: unknown_source.",
         "severity": "warning",
     } in result.warnings
+    citation_audit = result.details["citation_audit"]
+    assert citation_audit["unknown_citations"] == ["unknown_source"]
+    risk_section = _audit_section(citation_audit, "## 6. Risk Factors")
+    assert risk_section["citations"] == ["unknown_source"]
+    assert risk_section["known_citations"] == []
+    assert risk_section["unknown_citations"] == ["unknown_source"]
 
 
 def test_key_section_without_citation_returns_warning() -> None:
@@ -110,6 +140,13 @@ def test_key_section_without_citation_returns_warning() -> None:
         "message": "Report section is missing source_id citations: ## 7. Bull Case.",
         "severity": "warning",
     } in result.warnings
+    citation_audit = result.details["citation_audit"]
+    assert citation_audit["sections_missing_required_citations"] == [
+        "## 7. Bull Case",
+    ]
+    bull_case = _audit_section(citation_audit, "## 7. Bull Case")
+    assert bull_case["missing_required_citation"] is True
+    assert bull_case["citations"] == []
 
 
 def test_empty_quality_sections_return_warnings() -> None:
@@ -200,6 +237,28 @@ def test_professional_missing_data_limitations_do_not_trigger_weak_warning() -> 
     )
 
 
+def test_missing_report_quality_includes_citation_audit_details() -> None:
+    result = validate_report_quality(None, sources=VALID_SOURCES)
+
+    assert result.status == ReportQualityStatus.WARNING
+    assert {
+        "code": "missing_report",
+        "message": "No final report was available for quality validation.",
+        "severity": "warning",
+    } in result.warnings
+    citation_audit = result.details["citation_audit"]
+    assert citation_audit["status"] == "warning"
+    assert citation_audit["known_source_ids"] == [
+        "sec_company_facts",
+        "latest_10k",
+    ]
+    assert citation_audit["missing_required_sections"] == [
+        section["heading"] for section in citation_audit["sections"]
+    ]
+    assert citation_audit["sections_missing_required_citations"] == []
+    assert citation_audit["unknown_citations"] == []
+
+
 def _replace_section_body(report: str, section: str, replacement: str) -> str:
     start = report.find(section)
     assert start != -1
@@ -215,3 +274,11 @@ def _weak_section_warning(section: str) -> dict[str, str]:
         "message": f"Report section needs stronger source-grounded content: {section}.",
         "severity": "warning",
     }
+
+
+def _audit_section(citation_audit: dict, heading: str) -> dict:
+    return next(
+        section
+        for section in citation_audit["sections"]
+        if section["heading"] == heading
+    )

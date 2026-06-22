@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from finsight_agent.app.services.compliance import find_forbidden_terms
+from finsight_agent.app.services.report_citation_audit import audit_report_citations
 from finsight_agent.app.services.report_generator import RESEARCH_ONLY_NOTICE
 
 REQUIRED_SECTIONS = (
@@ -61,6 +62,7 @@ class ReportQualityStatus(StrEnum):
 class ReportQualityResult(BaseModel):
     status: ReportQualityStatus
     warnings: list[dict[str, str]] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 def validate_report_quality(
@@ -68,6 +70,10 @@ def validate_report_quality(
     *,
     sources: list[dict[str, Any]] | None = None,
 ) -> ReportQualityResult:
+    citation_audit = audit_report_citations(report, sources=sources)
+    details = {
+        "citation_audit": citation_audit.model_dump(mode="json"),
+    }
     warnings: list[dict[str, str]] = []
     if not report:
         return ReportQualityResult(
@@ -78,6 +84,7 @@ def validate_report_quality(
                     "No final report was available for quality validation.",
                 )
             ],
+            details=details,
         )
 
     warnings.extend(_section_warnings(report))
@@ -110,7 +117,7 @@ def validate_report_quality(
         )
 
     status = ReportQualityStatus.WARNING if warnings else ReportQualityStatus.PASSED
-    return ReportQualityResult(status=status, warnings=warnings)
+    return ReportQualityResult(status=status, warnings=warnings, details=details)
 
 
 def _section_warnings(report: str) -> list[dict[str, str]]:

@@ -97,6 +97,10 @@ Implemented research workflow:
 - Stage 4R filing evidence robustness: deterministic filing extraction for
   heading variants, table-of-contents noise, boundary detection, extraction
   diagnostics, and graph-level proof across fixture filing documents.
+- Stage 4S report citation audit: deterministic `citation_audit` details in
+  `report_quality_details`, known and unknown citation tracking, missing
+  required citation details, persisted/API quality details, and LLM report draft
+  citation safety proof.
 - LangGraph orchestration with typed state.
 - Structured warnings/errors instead of brittle crashes where graceful partial
   output is possible.
@@ -119,7 +123,7 @@ Implemented persistence and API capabilities:
 Current completed stage:
 
 ```text
-4R - Filing Evidence Robustness
+4S - Report Citation Audit and Quality Details
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic Company
@@ -150,6 +154,14 @@ table-of-contents noise, and Item 1A, Item 1B, and Item 2 boundaries. It records
 `extraction_diagnostics` and surfaces `business_section_unavailable` or
 `risk_factors_unavailable` warnings instead of inventing missing filing
 evidence.
+
+Stage 4S added deterministic report citation audit and quality details. Use
+`docs/specs/4S-report-citation-audit-quality-details.md` as the Stage 4S spec.
+Completed graph/API results now expose `report_quality_details` with a
+`citation_audit` object containing `known_source_ids`, `unknown_citations`,
+`sections_missing_required_citations`, and missing section details. LLM report
+draft citation failures use deterministic fallback instead of passing through
+as grounded report text.
 
 ## Development Method
 
@@ -678,6 +690,8 @@ Required:
   available and cite `[latest_10k]`.
 - Filing extraction diagnostics should remain available in graph state,
   warnings, and source metadata.
+- Citation audit details should remain available in `report_quality_details`
+  after report quality validation runs.
 - Financial sections should present readable financial values while raw metric
   values remain internal.
 - Financial sections should include deterministic period comparisons when
@@ -896,6 +910,10 @@ bypass the readable financial presentation layer.
 
 Stage 4R is Filing Evidence Robustness. It is implemented.
 
+```text
+4R - Filing Evidence Robustness
+```
+
 The stage spec is:
 
 ```text
@@ -921,6 +939,41 @@ Keep filing parsing deterministic. The parser should not use LLMs to identify,
 repair, or summarize missing filing sections. Missing or ambiguous evidence
 should become structured warnings or limitations, not invented business or risk
 content.
+
+## Stage 4S Status
+
+Stage 4S is Report Citation Audit and Quality Details. It is implemented.
+
+```text
+4S - Report Citation Audit and Quality Details
+```
+
+The stage spec is:
+
+```text
+docs/specs/4S-report-citation-audit-quality-details.md
+```
+
+Implemented:
+
+- `4S-0`: Wrote the Stage 4S spec.
+- `4S-1`: Added the deterministic citation audit service with section-level
+  citation extraction, `known_source_ids`, `unknown_citations`,
+  `sections_missing_required_citations`, and missing section tracking.
+- `4S-2`: Integrated `citation_audit` details into report quality validation
+  while preserving the existing `report_quality_status` and warnings contract.
+- `4S-3`: Propagated `report_quality_details` through graph state, API
+  responses, SQLite persistence, Alembic migration coverage, and retrieval
+  tests.
+- `4S-4`: Added graph proof that LLM report draft missing or unknown citation
+  failures use deterministic fallback and do not pass through as grounded
+  report text.
+- `4S-5`: Updated README and agent docs, then ran full verification.
+
+Keep citation audit deterministic. The audit should not use LLMs to judge,
+repair, or invent citations. Missing or unknown citations should become
+structured details and warnings, while final reports remain research-only and
+source-grounded.
 
 ## Data Quality and Limitations
 
