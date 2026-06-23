@@ -301,6 +301,36 @@ def test_readme_documents_report_citation_audit_and_quality_details() -> None:
         assert phrase in section
 
 
+def test_readme_documents_deterministic_evaluation_harness() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "### Deterministic Evals" in readme
+    section = readme.split("### Deterministic Evals", maxsplit=1)[1]
+
+    for phrase in [
+        "uv run python -m finsight_agent.evals.run",
+        "deterministic graph eval suite",
+        "fixture-backed",
+        "fake SEC",
+        "fake LLM",
+        "no live SEC or LLM calls",
+        "11-section structure",
+        "research-only disclaimer",
+        "citation_audit",
+        "known_source_ids",
+        "unknown_citations",
+        "sections_missing_required_citations",
+        "required warning codes",
+        "non-zero",
+        "CI-friendly",
+        "Cases:",
+        "Passed:",
+        "Failed:",
+        "Pass rate:",
+    ]:
+        assert phrase in section
+
+
 def test_agent_docs_document_stage_4p_provider_testing_status() -> None:
     docs = {
         "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
@@ -378,3 +408,22 @@ def test_agent_docs_document_stage_4s_citation_audit_status() -> None:
         assert "sections_missing_required_citations" in text, path
         assert "LLM report draft" in text, path
         assert "4S-5" in text, path
+
+
+def test_agent_docs_document_stage_4t_eval_harness_status() -> None:
+    docs = {
+        "AGENTS.md": Path("AGENTS.md").read_text(encoding="utf-8"),
+        "docs/AGENTS_FULL.md": Path("docs/AGENTS_FULL.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    for path, text in docs.items():
+        assert "4T - Evaluation Harness and Regression Suites" in text, path
+        assert "docs/specs/4T-evaluation-harness-regression-suites.md" in text, path
+        assert "deterministic graph eval suite" in text, path
+        assert "EvalCase" in text, path
+        assert "EvalSuiteResult" in text, path
+        assert "uv run python -m finsight_agent.evals.run" in text, path
+        assert "normal, degraded, and adversarial" in text, path
+        assert "4T-5" in text, path

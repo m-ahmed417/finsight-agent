@@ -58,12 +58,16 @@ Already implemented:
   `report_quality_details`, known and unknown citation tracking, missing
   required citation details, persisted/API quality details, and LLM report draft
   citation safety proof.
+- Stage 4T evaluation harness: deterministic graph eval suite, `EvalCase` and
+  `EvalSuiteResult` contracts, fixture-backed fake SEC/LLM regression cases,
+  reusable report-quality evaluators, and the
+  `uv run python -m finsight_agent.evals.run` command.
 - GitHub Actions CI for tests and linting.
 
 Current completed stage:
 
 ```text
-4S - Report Citation Audit and Quality Details
+4T - Evaluation Harness and Regression Suites
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic business
@@ -104,6 +108,14 @@ Completed graph/API results now expose `report_quality_details` with a
 draft citation failures use deterministic fallback instead of passing through
 as grounded report text.
 
+Stage 4T added a deterministic evaluation harness and regression suites. Use
+`docs/specs/4T-evaluation-harness-regression-suites.md` as the stage spec. The
+default deterministic graph eval suite covers normal, degraded, and adversarial
+cases with fake SEC and fake LLM clients, scores report structure, disclaimer,
+citation audit details, warning codes, compliance status, report quality status,
+and fallback behavior, and runs locally with
+`uv run python -m finsight_agent.evals.run`.
+
 ## Development Method
 
 From 4N onward, use both spec-driven development and test-driven development.
@@ -126,6 +138,7 @@ docs/specs/4P-llm-provider-integration-agent-testing.md
 docs/specs/4Q-financial-presentation-period-analysis.md
 docs/specs/4R-filing-evidence-robustness.md
 docs/specs/4S-report-citation-audit-quality-details.md
+docs/specs/4T-evaluation-harness-regression-suites.md
 ```
 
 ## Core Rules
@@ -156,6 +169,7 @@ Use UV:
 uv run python --version
 uv run pytest
 uv run ruff check .
+uv run python -m finsight_agent.evals.run
 uv run uvicorn finsight_agent.app.main:app --reload
 ```
 
@@ -284,10 +298,15 @@ Add or update tests with behavior changes. Prioritize deterministic tests:
 - Compliance tests.
 - Report generator and report validator tests.
 - Graph path tests with fake SEC/LLM clients.
+- Deterministic eval tests and the fixture-backed graph eval suite.
 - Repository and migration tests for persistence changes.
 
 Do not call real SEC or real LLM services in normal unit tests. Live tests must
 remain opt-in.
+
+The deterministic eval suite is not a live smoke test and does not use an
+LLM-as-judge. Run it with `uv run python -m finsight_agent.evals.run` to check
+normal, degraded, and adversarial graph behavior with fake SEC/LLM dependencies.
 
 For real LLM providers, keep `LLM_PROVIDER=mock` for normal local and CI
 verification. Use provider smoke test runs only with explicit flags such as
@@ -300,7 +319,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-## Stage 4N and 4O Status
+## Stage Status
 
 Stage 4N was implemented in small, tested slices:
 
@@ -387,5 +406,24 @@ Stage 4S was implemented in small, tested slices:
 5. `4S-4`: Added graph proof that LLM report draft missing or unknown citation
    failures use deterministic fallback.
 6. `4S-5`: Updated README and agent docs, then ran full verification.
+
+Stage 4T was implemented in small, tested slices:
+
+```text
+4T - Evaluation Harness and Regression Suites
+```
+
+1. `4T-0`: Wrote
+   `docs/specs/4T-evaluation-harness-regression-suites.md`.
+2. `4T-1`: Added tested `EvalCase`, `EvalExpectations`, `EvalCheckResult`,
+   `EvalCaseResult`, and `EvalSuiteResult` contracts.
+3. `4T-2`: Added reusable deterministic report-quality evaluator checks for
+   sections, disclaimer, forbidden language, scaffold language, citation audit
+   details, and warning codes.
+4. `4T-3`: Added the fixture-backed deterministic graph eval suite covering
+   normal, degraded, and adversarial graph cases with fake SEC/LLM clients.
+5. `4T-4`: Added the `uv run python -m finsight_agent.evals.run` command with
+   concise CI-friendly output and non-zero failure exit behavior.
+6. `4T-5`: Updated README and agent docs, then ran full verification.
 
 When in doubt, keep the MVP small, traceable, source-grounded, and safe.

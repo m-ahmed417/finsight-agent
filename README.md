@@ -18,11 +18,42 @@ Run lint checks:
 uv run ruff check .
 ```
 
+Run the deterministic graph eval suite:
+
+```powershell
+uv run python -m finsight_agent.evals.run
+```
+
 Run the API locally:
 
 ```powershell
 uv run uvicorn finsight_agent.app.main:app --reload
 ```
+
+### Deterministic Evals
+
+FinSight includes a deterministic graph eval suite for regression testing the
+research workflow across normal, degraded, and adversarial cases. The suite is
+fixture-backed and uses fake SEC and fake LLM dependencies, so normal eval runs
+make no live SEC or LLM calls.
+
+Run it with:
+
+```powershell
+uv run python -m finsight_agent.evals.run
+```
+
+The command prints concise CI-friendly output with `Cases:`, `Passed:`,
+`Failed:`, and `Pass rate:` fields. It exits with status `0` when all cases
+pass and a non-zero status when any eval case fails.
+
+The deterministic evals check report safety and grounding signals including the
+11-section structure, research-only disclaimer, `citation_audit` details,
+`known_source_ids`, `unknown_citations`,
+`sections_missing_required_citations`, required warning codes, forbidden
+warning codes, and fallback behavior for invalid or unsafe LLM report drafts.
+They complement unit and graph tests; they do not use an LLM judge and do not
+replace normal `uv run pytest` verification.
 
 ## API Workflow
 

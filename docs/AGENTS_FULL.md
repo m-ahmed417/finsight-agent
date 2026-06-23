@@ -101,6 +101,10 @@ Implemented research workflow:
   `report_quality_details`, known and unknown citation tracking, missing
   required citation details, persisted/API quality details, and LLM report draft
   citation safety proof.
+- Stage 4T evaluation harness: deterministic graph eval suite, `EvalCase` and
+  `EvalSuiteResult` contracts, fixture-backed fake SEC/LLM regression cases,
+  reusable report-quality evaluators, and the
+  `uv run python -m finsight_agent.evals.run` command.
 - LangGraph orchestration with typed state.
 - Structured warnings/errors instead of brittle crashes where graceful partial
   output is possible.
@@ -123,7 +127,7 @@ Implemented persistence and API capabilities:
 Current completed stage:
 
 ```text
-4S - Report Citation Audit and Quality Details
+4T - Evaluation Harness and Regression Suites
 ```
 
 Stage 4O added SEC Item 1 Business extraction and deterministic Company
@@ -163,6 +167,15 @@ Completed graph/API results now expose `report_quality_details` with a
 draft citation failures use deterministic fallback instead of passing through
 as grounded report text.
 
+Stage 4T added a deterministic evaluation harness and regression suites. Use
+`docs/specs/4T-evaluation-harness-regression-suites.md` as the Stage 4T spec.
+The default deterministic graph eval suite covers normal, degraded, and
+adversarial cases with fake SEC and fake LLM clients. It scores report
+structure, research-only disclaimer, citation audit details, known source IDs,
+unknown citations, required warning codes, compliance status, report quality
+status, and fallback behavior. Run it with
+`uv run python -m finsight_agent.evals.run`.
+
 ## Development Method
 
 Use a combination of spec-driven development and test-driven development.
@@ -189,6 +202,7 @@ Use UV for project commands:
 uv run python --version
 uv run pytest
 uv run ruff check .
+uv run python -m finsight_agent.evals.run
 uv run uvicorn finsight_agent.app.main:app --reload
 ```
 
@@ -235,6 +249,12 @@ Actual package structure:
 
 ```text
 src/finsight_agent/
+  evals/
+    evaluators.py
+    graph_suite.py
+    models.py
+    run.py
+
   app/
     main.py
     config.py
@@ -975,6 +995,39 @@ repair, or invent citations. Missing or unknown citations should become
 structured details and warnings, while final reports remain research-only and
 source-grounded.
 
+## Stage 4T Status
+
+Stage 4T is Evaluation Harness and Regression Suites. It is implemented.
+
+```text
+4T - Evaluation Harness and Regression Suites
+```
+
+The stage spec is:
+
+```text
+docs/specs/4T-evaluation-harness-regression-suites.md
+```
+
+Implemented:
+
+- `4T-0`: Wrote the Stage 4T spec.
+- `4T-1`: Added tested `EvalCase`, `EvalExpectations`, `EvalCheckResult`,
+  `EvalCaseResult`, and `EvalSuiteResult` contracts.
+- `4T-2`: Added reusable deterministic report-quality evaluator checks for
+  required sections, research-only disclaimer, forbidden language, scaffold
+  language, citation audit details, required citations, unknown citations,
+  missing section citations, and warning codes.
+- `4T-3`: Added the fixture-backed deterministic graph eval suite covering
+  normal, degraded, and adversarial cases with fake SEC and fake LLM clients.
+- `4T-4`: Added the `uv run python -m finsight_agent.evals.run` command with
+  concise CI-friendly output and non-zero failure exit behavior.
+- `4T-5`: Updated README and agent docs, then ran full verification.
+
+Keep default evals deterministic. They should not call live SEC services, live
+LLM providers, or an LLM-as-judge. Optional live evals can be added later only
+behind explicit environment flags.
+
 ## Data Quality and Limitations
 
 SEC data is messy. Code defensively.
@@ -1237,6 +1290,25 @@ Test:
 - Compliance rewrite path.
 - Compliance blocked path.
 - Report quality validation path.
+
+### Deterministic Evals
+
+Run the fixture-backed deterministic graph eval suite with:
+
+```powershell
+uv run python -m finsight_agent.evals.run
+```
+
+The suite uses fake SEC and fake LLM clients by default. It should not call live
+SEC endpoints, live model APIs, or an LLM-as-judge. It should cover normal,
+degraded, and adversarial graph cases, including missing filing sections,
+invalid LLM report draft citations, unknown source IDs, unsafe report language,
+and compliance rewrite behavior.
+
+Eval model contracts such as `EvalCase`, `EvalCheckResult`, `EvalCaseResult`,
+and `EvalSuiteResult` should remain deterministic and easy to serialize. Eval
+checks should return structured pass/fail results with useful messages instead
+of raising for expected quality failures.
 
 ### Persistence and API
 
